@@ -1,0 +1,20 @@
+name: "fark-ai"
+description: "Fark AI GitHub Action"
+inputs:
+  # Add your inputs here
+  # example:
+  #   name:
+  #     description: 'Name of the person to greet'
+  #     required: true
+  #     default: 'World'
+outputs:
+  # Add your outputs here
+  # example:
+  #   result:
+  #     description: 'The result of the action'
+runs:
+  using: "node20"
+  main: "dist/index.js"
+branding:
+  icon: "zap"
+  color: "blue"
