@@ -2,7 +2,7 @@ import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
 import { backendChangesSchema } from "./be-analyzer";
-import { logger } from "../utils/logger";
+import pino from "pino";
 
 // Shared frontend repo schema
 export const frontendRepoSchema = z.object({
@@ -50,10 +50,10 @@ export type FrontendImpactsOutput = z.infer<typeof frontendImpactsSchema>;
 export async function findFrontendImpacts(
   input: FrontendFinderInput,
   tools: Record<string, any>,
-  openaiApiKey: string
+  openaiApiKey: string,
+  logger: pino.Logger = pino()
 ): Promise<FrontendImpactsOutput> {
-  logger.debug("Frontend Finder: Starting analysis");
-  logger.debug("Frontend Finder: Input:", input);
+  logger.debug({ input }, "Frontend Finder: Starting analysis");
 
   // Validate inputs
   if (!input) {
@@ -99,6 +99,12 @@ export async function findFrontendImpacts(
 
   const { frontendRepo, backendChanges } = input;
   logger.info(
+    {
+      owner: frontendRepo.owner,
+      repo: frontendRepo.repo,
+      branch: frontendRepo.branch,
+      changeCount: backendChanges.backendChanges.length,
+    },
     `Frontend Finder: Analyzing ${frontendRepo.owner}/${frontendRepo.repo} (branch: ${frontendRepo.branch}) for ${backendChanges.backendChanges.length} backend changes`
   );
 
@@ -190,7 +196,7 @@ Return all impacts found in this frontend repository. If no impacts are found, r
   logger.info(
     `Frontend Finder: Analysis complete, found ${result.output.frontendImpacts.length} impacts`
   );
-  logger.debug("Frontend Finder: Output:", result.output);
+  logger.debug({ output: result.output }, "Frontend Finder: Output");
 
   return result.output as FrontendImpactsOutput;
 }

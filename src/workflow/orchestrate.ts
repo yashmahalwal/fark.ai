@@ -10,7 +10,7 @@ import {
 } from "../agents/frontend-finder";
 import { generatePRComments } from "../agents/comment-generator";
 import { getBackendTools, getFrontendTools } from "../tools/github-tools";
-import { logger } from "../utils/logger";
+import pino from "pino";
 import { z } from "zod/v3";
 
 // Input schema for orchestration - reuses schemas from agents
@@ -25,6 +25,11 @@ const orchestrateInputSchema = z.object({
     .describe("GitHub token for frontend repository access"),
   mcpServerUrl: z.string().describe("GitHub MCP server URL"),
   openaiApiKey: z.string().describe("OpenAI API key"),
+  logLevel: z
+    .enum(["debug", "info", "warn", "error"])
+    .optional()
+    .default("info")
+    .describe("Log level (defaults to 'info')"),
 });
 
 export type OrchestrateInput = z.infer<typeof orchestrateInputSchema>;
@@ -52,9 +57,6 @@ export type OrchestrateOutput = {
 export async function runFarkAnalysis(
   input: OrchestrateInput
 ): Promise<OrchestrateOutput> {
-  logger.info("Starting Fark.ai analysis workflow");
-  logger.debug("Input:", input);
-
   // Validate input
   const validatedInput = orchestrateInputSchema.parse(input);
 
@@ -65,7 +67,36 @@ export async function runFarkAnalysis(
     frontendGithubToken,
     mcpServerUrl,
     openaiApiKey,
+    logLevel,
   } = validatedInput;
+
+  // Create logger
+  const isGitHubActions = process.env.GITHUB_ACTIONS === "true";
+  const useJson = process.env.LOG_FORMAT === "json" || isGitHubActions;
+
+  const logger = pino({
+    level: logLevel,
+    ...(useJson
+      ? {
+          formatters: {
+            level: (label) => {
+              return { level: label };
+            },
+          },
+        }
+      : {
+          transport: {
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "HH:MM:ss Z",
+              ignore: "pid,hostname",
+            },
+          },
+        }),
+  });
+
+  logger.info({ input }, "Starting Fark.ai analysis workflow");
 
   logger.info(
     `Analyzing backend PR #${backend.pull_number} in ${backend.owner}/${backend.repo}`
@@ -92,7 +123,7 @@ export async function runFarkAnalysis(
   logger.info(
     `Backend analysis complete: ${backendChangesResult.backendChanges.length} breaking changes detected`
   );
-  logger.debug("Backend changes:", backendChangesResult);
+  logger.debug({ changes: backendChangesResult }, "Backend changes");
 
   // Step 3: Early exit if no backend changes
   if (backendChangesResult.backendChanges.length === 0) {
@@ -116,11 +147,16 @@ export async function runFarkAnalysis(
   for (const frontendRepo of frontendRepos) {
     const repoId = `${frontendRepo.owner}/${frontendRepo.repo}`;
     logger.info(
+      {
+        owner: frontendRepo.owner,
+        repo: frontendRepo.repo,
+        branch: frontendRepo.branch,
+      },
       `Analyzing frontend repo: ${repoId} (branch: ${frontendRepo.branch})`
     );
 
     try {
-      logger.debug(`Initializing frontend tools for ${repoId}`);
+      logger.debug({ repoId }, `Initializing frontend tools for ${repoId}`);
       const { tools: frontendTools } = await getFrontendTools(
         frontendGithubToken,
         mcpServerUrl
@@ -132,15 +168,17 @@ export async function runFarkAnalysis(
           backendChanges: backendChangesResult,
         },
         frontendTools,
-        openaiApiKey
+        openaiApiKey,
+        logger
       );
 
       logger.info(
+        { repoId, impactCount: frontendImpactsResult.frontendImpacts.length },
         `Frontend analysis for ${repoId} complete: ${frontendImpactsResult.frontendImpacts.length} impacts found`
       );
       logger.debug(
-        `Impacts for ${repoId}:`,
-        frontendImpactsResult.frontendImpacts
+        { repoId, impacts: frontendImpactsResult.frontendImpacts },
+        `Impacts for ${repoId}`
       );
 
       // Add impacts from this repo to the combined array
@@ -148,14 +186,18 @@ export async function runFarkAnalysis(
     } catch (error) {
       // Log error but continue with other repos
       logger.error(
-        `Failed to analyze frontend repo ${repoId}:`,
-        error instanceof Error ? error.message : error
+        {
+          repoId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        `Failed to analyze frontend repo ${repoId}:`
       );
       // Continue to next repo
     }
   }
 
   logger.info(
+    { totalImpacts: allFrontendImpacts.length },
     `Frontend analysis complete: ${allFrontendImpacts.length} total impacts across all repos`
   );
 
@@ -169,12 +211,14 @@ export async function runFarkAnalysis(
       backend_repo: backend.repo,
       pull_number: backend.pull_number,
     },
-    openaiApiKey
+    openaiApiKey,
+    logger
   );
   logger.info(
+    { commentCount: prComments.comments.length },
     `PR comment generation complete: ${prComments.comments.length} comments generated`
   );
-  logger.debug("PR comments:", prComments);
+  logger.debug({ comments: prComments }, "PR comments");
 
   // Step 6: Return results
   logger.info("Fark.ai analysis workflow completed successfully");

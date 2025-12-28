@@ -1,7 +1,7 @@
 import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
-import { logger } from "../utils/logger";
+import pino from "pino";
 
 // Shared backend repository schema
 export const backendRepoSchema = z.object({
@@ -23,7 +23,7 @@ export const backendChangeItemSchema = z.object({
       startLine: z.number().describe("Starting line number in the diff"),
       endLine: z.number().describe("Ending line number in the diff"),
       changes: z.array(z.string()).describe("Array of diff lines"),
-    }),
+    })
   ),
   impact: z
     .enum([
@@ -148,6 +148,7 @@ export async function analyzeBackendDiff(
   input: BackendInput,
   tools: Record<string, any>,
   openaiApiKey: string,
+  logger: pino.Logger = pino()
 ): Promise<BackendChangesOutput> {
   // Validate inputs
   if (!input) {
@@ -171,7 +172,7 @@ export async function analyzeBackendDiff(
     input.backend.pull_number <= 0
   ) {
     throw new Error(
-      "Input.backend.pull_number is required and must be a positive number",
+      "Input.backend.pull_number is required and must be a positive number"
     );
   }
 
@@ -185,11 +186,19 @@ export async function analyzeBackendDiff(
     openaiApiKey.trim().length === 0
   ) {
     throw new Error(
-      "OpenAI API key is required and must be a non-empty string",
+      "OpenAI API key is required and must be a non-empty string"
     );
   }
 
   const { backend } = input;
+  logger.info(
+    {
+      pull_number: backend.pull_number,
+      owner: backend.owner,
+      repo: backend.repo,
+    },
+    `BE Analyzer: Analyzing PR #${backend.pull_number} in ${backend.owner}/${backend.repo}`
+  );
 
   const prompt = `Analyze pull request #${backend.pull_number} in ${backend.owner}/${backend.repo} to identify breaking API interface changes.
 
@@ -274,14 +283,17 @@ If no API-relevant breaking changes are detected, return an empty backendChanges
   });
 
   if (!result.output) {
-    logger.error("BE Analyzer: Failed to generate structured output from the model");
+    logger.error(
+      "BE Analyzer: Failed to generate structured output from the model"
+    );
     throw new Error("Failed to generate structured output from the model");
   }
 
   logger.info(
+    { count: result.output.backendChanges.length },
     `BE Analyzer: Analysis complete, found ${result.output.backendChanges.length} breaking changes`
   );
-  logger.debug("BE Analyzer: Output:", result.output);
+  logger.debug({ output: result.output }, "BE Analyzer: Output:");
 
   return result.output as BackendChangesOutput;
 }

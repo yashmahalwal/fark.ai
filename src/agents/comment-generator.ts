@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
 import { backendChangeItemSchema } from "./be-analyzer";
 import { frontendImpactItemSchema } from "./frontend-finder";
-import { logger } from "../utils/logger";
+import pino from "pino";
 
 // Input schema - accepts arrays directly
 const commentGeneratorInputSchema = z.object({
@@ -41,7 +41,8 @@ export type PRCommentsOutput = z.infer<typeof prCommentsSchema>;
  */
 export async function generatePRComments(
   input: CommentGeneratorInput,
-  openaiApiKey: string
+  openaiApiKey: string,
+  logger: pino.Logger = pino()
 ): Promise<PRCommentsOutput> {
   // Validate inputs
   if (!input) {
@@ -89,9 +90,14 @@ export async function generatePRComments(
   } = input;
 
   logger.info(
+    { pull_number, owner: backend_owner, repo: backend_repo },
     `Comment Generator: Generating comments for PR #${pull_number} in ${backend_owner}/${backend_repo}`
   );
   logger.debug(
+    {
+      backendChangeCount: backendChanges.length,
+      frontendImpactCount: frontendImpacts.length,
+    },
     `Comment Generator: ${backendChanges.length} backend changes, ${frontendImpacts.length} frontend impacts`
   );
 
@@ -140,9 +146,10 @@ Generate comments with correct file paths and line numbers from backendChanges.d
   }
 
   logger.info(
+    { commentCount: result.output.comments.length },
     `Comment Generator: Generation complete, created ${result.output.comments.length} comments`
   );
-  logger.debug("Comment Generator: Output:", result.output);
+  logger.debug({ output: result.output }, "Comment Generator: Output:");
 
   return result.output as PRCommentsOutput;
 }
