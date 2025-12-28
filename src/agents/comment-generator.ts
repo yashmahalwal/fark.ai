@@ -1,13 +1,14 @@
 import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
-import { backendChangesSchema } from "./be-analyzer";
-import { frontendImpactsSchema } from "./frontend-finder";
+import { backendChangeItemSchema } from "./be-analyzer";
+import { frontendImpactItemSchema } from "./frontend-finder";
+import { logger } from "../utils/logger";
 
-// Input schema
+// Input schema - accepts arrays directly
 const commentGeneratorInputSchema = z.object({
-  backendChanges: backendChangesSchema,
-  frontendImpacts: frontendImpactsSchema,
+  backendChanges: z.array(backendChangeItemSchema),
+  frontendImpacts: z.array(frontendImpactItemSchema),
   backend_owner: z.string().describe("Backend repository owner"),
   backend_repo: z.string().describe("Backend repository name"),
   pull_number: z.number().describe("Pull request number"),
@@ -24,15 +25,15 @@ const prCommentsSchema = z.object({
       body: z
         .string()
         .describe(
-          "Comment text explaining the breaking change, impacted frontend files, and suggested fix",
+          "Comment text explaining the breaking change, impacted frontend files, and suggested fix"
         ),
-    }),
+    })
   ),
   summary: z.string().describe("Summary of breaking changes detected"),
 });
 
-type CommentGeneratorInput = z.infer<typeof commentGeneratorInputSchema>;
-type PRCommentsOutput = z.infer<typeof prCommentsSchema>;
+export type CommentGeneratorInput = z.infer<typeof commentGeneratorInputSchema>;
+export type PRCommentsOutput = z.infer<typeof prCommentsSchema>;
 
 /**
  * Agent 3: PR Comment Generator
@@ -40,7 +41,7 @@ type PRCommentsOutput = z.infer<typeof prCommentsSchema>;
  */
 export async function generatePRComments(
   input: CommentGeneratorInput,
-  openaiApiKey: string,
+  openaiApiKey: string
 ): Promise<PRCommentsOutput> {
   // Validate inputs
   if (!input) {
@@ -65,7 +66,7 @@ export async function generatePRComments(
 
   if (typeof input.pull_number !== "number" || input.pull_number <= 0) {
     throw new Error(
-      "Input.pull_number is required and must be a positive number",
+      "Input.pull_number is required and must be a positive number"
     );
   }
 
@@ -75,7 +76,7 @@ export async function generatePRComments(
     openaiApiKey.trim().length === 0
   ) {
     throw new Error(
-      "OpenAI API key is required and must be a non-empty string",
+      "OpenAI API key is required and must be a non-empty string"
     );
   }
 
@@ -86,6 +87,13 @@ export async function generatePRComments(
     backend_repo,
     pull_number,
   } = input;
+
+  logger.info(
+    `Comment Generator: Generating comments for PR #${pull_number} in ${backend_owner}/${backend_repo}`
+  );
+  logger.debug(
+    `Comment Generator: ${backendChanges.length} backend changes, ${frontendImpacts.length} frontend impacts`
+  );
 
   const prompt = `Generate inline PR comments for pull request #${pull_number} in ${backend_owner}/${backend_repo}.
 
@@ -117,6 +125,7 @@ Generate comments with correct file paths and line numbers from backendChanges.d
     schema: prCommentsSchema,
   });
 
+  logger.debug("Comment Generator: Calling OpenAI to generate comments");
   const result = await generateText({
     model: openaiClient("gpt-4o"),
     output: outputSpec,
@@ -124,8 +133,16 @@ Generate comments with correct file paths and line numbers from backendChanges.d
   });
 
   if (!result.output) {
+    logger.error(
+      "Comment Generator: Failed to generate structured output from the model"
+    );
     throw new Error("Failed to generate structured output from the model");
   }
+
+  logger.info(
+    `Comment Generator: Generation complete, created ${result.output.comments.length} comments`
+  );
+  logger.debug("Comment Generator: Output:", result.output);
 
   return result.output as PRCommentsOutput;
 }

@@ -2,14 +2,21 @@ import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
 import { backendChangesSchema } from "./be-analyzer";
+import { logger } from "../utils/logger";
+
+// Shared frontend repo schema
+export const frontendRepoSchema = z.object({
+  owner: z.string().describe("Frontend repository owner"),
+  repo: z.string().describe("Frontend repository name"),
+  branch: z
+    .string()
+    .default("main")
+    .describe("Branch name (defaults to 'main')"),
+});
 
 // Input schema
 const frontendFinderInputSchema = z.object({
-  frontendRepo: z.object({
-    owner: z.string().describe("Frontend repository owner"),
-    repo: z.string().describe("Frontend repository name"),
-    branch: z.string().describe("Branch name"),
-  }),
+  frontendRepo: frontendRepoSchema,
   backendChanges: backendChangesSchema,
 });
 
@@ -33,8 +40,8 @@ export const frontendImpactsSchema = z.object({
   frontendImpacts: z.array(frontendImpactItemSchema),
 });
 
-type FrontendFinderInput = z.infer<typeof frontendFinderInputSchema>;
-type FrontendImpactsOutput = z.infer<typeof frontendImpactsSchema>;
+export type FrontendFinderInput = z.infer<typeof frontendFinderInputSchema>;
+export type FrontendImpactsOutput = z.infer<typeof frontendImpactsSchema>;
 
 /**
  * Agent 2: Frontend Impact Finder
@@ -45,6 +52,9 @@ export async function findFrontendImpacts(
   tools: Record<string, any>,
   openaiApiKey: string
 ): Promise<FrontendImpactsOutput> {
+  logger.debug("Frontend Finder: Starting analysis");
+  logger.debug("Frontend Finder: Input:", input);
+
   // Validate inputs
   if (!input) {
     throw new Error("Input is required");
@@ -67,14 +77,7 @@ export async function findFrontendImpacts(
     throw new Error("Input.frontendRepo.repo is required and must be a string");
   }
 
-  if (
-    !input.frontendRepo.branch ||
-    typeof input.frontendRepo.branch !== "string"
-  ) {
-    throw new Error(
-      "Input.frontendRepo.branch is required and must be a string"
-    );
-  }
+  // Branch is optional and defaults to "main" via schema
 
   if (!Array.isArray(input.backendChanges)) {
     throw new Error("Input.backendChanges is required and must be an array");
@@ -95,6 +98,9 @@ export async function findFrontendImpacts(
   }
 
   const { frontendRepo, backendChanges } = input;
+  logger.info(
+    `Frontend Finder: Analyzing ${frontendRepo.owner}/${frontendRepo.repo} (branch: ${frontendRepo.branch}) for ${backendChanges.backendChanges.length} backend changes`
+  );
 
   const prompt = `Find frontend code in ${frontendRepo.owner}/${
     frontendRepo.repo
@@ -166,6 +172,7 @@ Return all impacts found in this frontend repository. If no impacts are found, r
     schema: frontendImpactsSchema,
   });
 
+  logger.debug("Frontend Finder: Calling OpenAI to find impacts");
   const result = await generateText({
     model: openaiClient("gpt-4o"),
     output: outputSpec,
@@ -174,8 +181,16 @@ Return all impacts found in this frontend repository. If no impacts are found, r
   });
 
   if (!result.output) {
+    logger.error(
+      "Frontend Finder: Failed to generate structured output from the model"
+    );
     throw new Error("Failed to generate structured output from the model");
   }
+
+  logger.info(
+    `Frontend Finder: Analysis complete, found ${result.output.frontendImpacts.length} impacts`
+  );
+  logger.debug("Frontend Finder: Output:", result.output);
 
   return result.output as FrontendImpactsOutput;
 }

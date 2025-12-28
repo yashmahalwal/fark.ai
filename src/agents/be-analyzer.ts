@@ -1,6 +1,7 @@
 import { generateText, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
+import { logger } from "../utils/logger";
 
 // Shared backend repository schema
 export const backendRepoSchema = z.object({
@@ -136,8 +137,8 @@ export const backendChangesSchema = z.object({
   backendChanges: z.array(backendChangeItemSchema),
 });
 
-type BackendInput = z.infer<typeof backendInputSchema>;
-type BackendChangesOutput = z.infer<typeof backendChangesSchema>;
+export type BackendInput = z.infer<typeof backendInputSchema>;
+export type BackendChangesOutput = z.infer<typeof backendChangesSchema>;
 
 /**
  * Agent 1: BE Diff Analyzer
@@ -264,6 +265,7 @@ If no API-relevant breaking changes are detected, return an empty backendChanges
     schema: backendChangesSchema,
   });
 
+  logger.debug("BE Analyzer: Calling OpenAI to analyze diff");
   const result = await generateText({
     model: openaiClient("gpt-4o"),
     output: outputSpec,
@@ -272,8 +274,14 @@ If no API-relevant breaking changes are detected, return an empty backendChanges
   });
 
   if (!result.output) {
+    logger.error("BE Analyzer: Failed to generate structured output from the model");
     throw new Error("Failed to generate structured output from the model");
   }
+
+  logger.info(
+    `BE Analyzer: Analysis complete, found ${result.output.backendChanges.length} breaking changes`
+  );
+  logger.debug("BE Analyzer: Output:", result.output);
 
   return result.output as BackendChangesOutput;
 }
