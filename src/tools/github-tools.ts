@@ -33,6 +33,8 @@ export async function getGitHubTools(token?: string, serverUrl?: string) {
 
 /**
  * Gets tools for backend repository operations
+ * Returns all tools from the MCP server
+ * Tool limiting is done via AI SDK's activeTools in generateText
  * Uses GITHUB_TOKEN for backend repo access
  */
 export async function getBackendTools(token: string, serverUrl: string) {

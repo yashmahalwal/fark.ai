@@ -53,7 +53,14 @@ export async function findFrontendImpacts(
   openaiApiKey: string,
   logger: pino.Logger = pino()
 ): Promise<FrontendImpactsOutput> {
-  logger.debug({ input }, "Frontend Finder: Starting analysis");
+  logger.debug(
+    {
+      frontendRepo: `${input.frontendRepo.owner}/${input.frontendRepo.repo}`,
+      branch: input.frontendRepo.branch,
+      backendChangesCount: input.backendChanges.backendChanges.length,
+    },
+    "Frontend Finder: Starting analysis"
+  );
 
   // Validate inputs
   if (!input) {

@@ -11,6 +11,13 @@ module.exports = [
       parserOptions: {
         project: "./tsconfig.json",
       },
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+      },
     },
     plugins: {
       "@typescript-eslint": tseslint,
@@ -20,10 +27,11 @@ module.exports = [
       // Allow 'any' type for tools parameter (generic MCP tools)
       "@typescript-eslint/no-explicit-any": "off",
       // Allow schemas that are only used for type inference
+      // Allow variables prefixed with _ (intentionally unused)
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
-          varsIgnorePattern: "^.*Schema$",
+          varsIgnorePattern: "^(_.*|.*Schema)$",
         },
       ],
     },
@@ -32,4 +40,3 @@ module.exports = [
     ignores: ["dist/**", "node_modules/**", "**/*.js"],
   },
 ];
-

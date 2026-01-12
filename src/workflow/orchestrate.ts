@@ -96,7 +96,15 @@ export async function runFarkAnalysis(
         }),
   });
 
-  logger.info({ input }, "Starting Fark.ai analysis workflow");
+  logger.info(
+    {
+      backend: `${backend.owner}/${backend.repo}`,
+      pull_number: backend.pull_number,
+      frontendReposCount: frontendRepos.length,
+      logLevel,
+    },
+    "Starting Fark.ai analysis workflow"
+  );
 
   logger.info(
     `Analyzing backend PR #${backend.pull_number} in ${backend.owner}/${backend.repo}`
@@ -114,11 +122,27 @@ export async function runFarkAnalysis(
   );
 
   // Step 2: Run Agent 1 - BE Diff Analyzer
+  // Read BE Analyzer configuration from environment variables
+  // Only allow these read-only tools: get_file_contents, search_code, pull_request_read
+  const beAnalyzerOptions = {
+    ...(process.env.BE_ANALYZER_MAX_STEPS && {
+      maxSteps: parseInt(process.env.BE_ANALYZER_MAX_STEPS, 10),
+    }),
+    ...(process.env.BE_ANALYZER_MAX_OUTPUT_TOKENS && {
+      maxOutputTokens: parseInt(process.env.BE_ANALYZER_MAX_OUTPUT_TOKENS, 10),
+    }),
+    ...(process.env.BE_ANALYZER_MAX_TOTAL_TOKENS && {
+      maxTotalTokens: parseInt(process.env.BE_ANALYZER_MAX_TOTAL_TOKENS, 10),
+    }),
+  };
+
   logger.info("Step 1: Analyzing backend diff for API breaking changes");
   const backendChangesResult = await analyzeBackendDiff(
     { backend },
     backendTools,
-    openaiApiKey
+    openaiApiKey,
+    logger,
+    beAnalyzerOptions
   );
   logger.info(
     `Backend analysis complete: ${backendChangesResult.backendChanges.length} breaking changes detected`
