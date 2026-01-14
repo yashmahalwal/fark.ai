@@ -26,19 +26,6 @@ export const frontendImpactItemSchema = z.object({
       "ID of the backend change that caused this impact (references backendChange.id)"
     ),
   file: z.string().describe("File path in frontend repo where impact occurs"),
-  codeHunk: z
-    .object({
-      startLine: z
-        .number()
-        .describe("Starting line number of the code section"),
-      endLine: z.number().describe("Ending line number of the code section"),
-      code: z
-        .string()
-        .describe(
-          "The actual code snippet related to the impact (lines from startLine to endLine)"
-        ),
-    })
-    .describe("Code section where the impact occurs"),
   apiElement: z
     .string()
     .describe(
@@ -47,7 +34,7 @@ export const frontendImpactItemSchema = z.object({
   description: z
     .string()
     .describe(
-      "Description of how this backend change impacts the frontend code at this location"
+      "High-level description of how this backend change impacts the frontend code - focus on what breaks and why, not technical details"
     ),
   severity: z
     .enum(["high", "medium", "low"])

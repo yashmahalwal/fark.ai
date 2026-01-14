@@ -366,7 +366,6 @@ export async function findFrontendImpacts(
             index: index + 1,
             backendChangeId: impact.backendChangeId,
             file: impact.file,
-            codeHunk: impact.codeHunk,
             apiElement: impact.apiElement,
             description: impact.description,
             severity: impact.severity,

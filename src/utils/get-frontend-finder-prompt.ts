@@ -9,79 +9,49 @@ export function getFrontendFinderPrompt(input: FrontendFinderInput): string {
   const { frontendRepo, backendChanges } = input;
   const { owner, repo, branch } = frontendRepo;
 
-  return `Find ALL frontend code in ${owner}/${repo} (branch: ${branch}) impacted by these backend API changes:
+  return `Find frontend code in ${owner}/${repo} (branch: ${branch}) that will be BROKEN by these backend API changes:
 
 ${JSON.stringify(backendChanges.backendChanges, null, 2)}
 
-AVAILABLE TOOLS:
-- get_file_contents: Read repository files (can read specific line ranges)
-- search_code: Search for code patterns across the repository
+CRITICAL: Only report impacts where the backend change will ACTUALLY BREAK the frontend code. Use the backend change's impact type and description to determine if frontend code is affected.
 
-EFFICIENCY CONSTRAINTS - AVOID READING UNNECESSARY DATA:
-Files can be LARGE - read efficiently:
-- Read files in chunks/sections (specific line ranges) rather than entire files
-- Use search_code to locate specific API elements before reading files - this narrows down what to read
-- Explore file structure when needed to understand repository organization
-- Use search_code to find where API elements are used before reading files
+WORKFLOW:
+1. Extract unique API terms from ALL backend changes (impact type, description, diffHunks)
+2. For each unique API term, search ONCE using specific terms (e.g., "User.email" not "email")
+3. CRITICAL: After EVERY search_code call:
+   - Check if it returned any results (files/matches)
+   - If results exist: You MUST call get_file_contents to read those files BEFORE proceeding
+   - Do NOT make another search_code call until you've read and analyzed files from the previous search
+   - You CANNOT determine if there are impacts without reading the files
+4. Analyze each file against backend changes to determine if it breaks
+5. Only after reading ALL files where search_code found matches, output impacts with: backendChangeId, file, apiElement, description, severity
 
-CRITICAL: You MUST find ALL impacts across the complete codebase - search comprehensively but efficiently.
+SEARCH RULES:
+- Search each unique API term ONCE - do not repeat or search variations (e.g., if you searched "orders", don't search "order" or "Order")
+- Do not search overly broad terms (e.g., "fetch(" or "axios")
+- If search returns no results, move to next term - don't try variations
+- Track what you've searched to avoid redundant work
 
-PROCESS:
-1. For EACH backend change:
-   - Extract API elements to search for from impact, description and diffHunks:
-     * fieldRenamed/fieldRemoved/fieldAdded → extract field name
-     * endpointChanged → extract endpoint path
-     * parameterAdded/parameterRemoved → extract parameter name
-     * typeChanged → extract field name
-     * statusCodeChanged → extract endpoint path
-     * enumValueAdded/enumValueRemoved → extract enum name and value
-     * nullableToRequired/requiredToNullable → extract field name
-     * arrayStructureChanged/objectStructureChanged → extract field name
-     * defaultValueChanged → extract field name
-     * unionTypeExtended → extract field name
-     * other → parse description for API element
-   
-2. Search for references efficiently:
-   - Use search_code to find where each API element is used across the entire codebase
-   - Use search_code to narrow down which files contain relevant API code before reading them
-   - For each search match found, read only the specific line range around the match (not entire files)
-   - If search result is clear enough, you may not need to read the file at all
-   - Explore file structure when needed to understand repository organization
-   - Read files in chunks (specific line ranges) rather than entire files
-   - CRITICAL: Search comprehensively to find ALL impacts - do not stop after finding one match
+FILE READING:
+- Read ONLY files returned by search_code (use line ranges when possible, entire files only if needed)
+- Do NOT explore directories or file structures - only read specific files where matches were found
+- Do NOT call get_file_contents on directories (exception: only when absolutely necessary)
+- Do NOT explore related files, imports, or implementation details
 
-3. For each impact found, output:
-   - backendChangeId: The id from the backend change that caused this impact (from backendChanges[].id)
-   - file: File path where impact occurs
-   - codeHunk: Object with:
-     * startLine: Starting line number of the code section
-     * endLine: Ending line number of the code section
-     * code: The actual code snippet from startLine to endLine (read from file contents)
-   - apiElement: The specific API element being referenced (e.g., "User.email", "/api/users", "OrderStatus.PENDING")
-   - description: Clear description of how this backend change impacts the frontend code at this location
-   - severity: "high" (breaking - causes crashes/failures), "medium" (may break), "low" (minor issue)
+ANALYSIS:
+- Use backend change description directly - it explains what changed
+- Consider backward compatibility - changes breaking older clients are breaking, especially for compiled languages
+- Determine if change breaks frontend code based on impact type and description
+- Report each impact and move on - don't dig deeper
 
-OUTPUT STRUCTURE:
-- Return an object with frontendImpacts array
-- Each entry in frontendImpacts represents ONE impact location
-- If the same API element appears in multiple files/locations, create separate entries
-- Return empty frontendImpacts array only if NO impacts found after thorough search
+OUTPUT:
+- Return object with frontendImpacts array
+- Each entry: backendChangeId, file, apiElement, description (high-level), severity (high/medium/low)
+- Return empty array only if no breaking impacts found after reading ALL files where search_code found matches
 
-CRITICAL: You MUST find ALL impacts. Search comprehensively - do not stop after finding one.
-
-IMPORTANT: Do NOT give up early or return empty results prematurely. Continue searching until you have:
-- Searched for ALL API elements from ALL backend changes using search_code
-- Tried multiple search patterns/variations for each API element (e.g., field name, camelCase, snake_case, full path)
-- Read files where matches were found to verify impacts
-- Explored related files if initial searches don't find matches (check imports, type definitions, API clients)
-- Verified each potential impact before including it
-- Only return empty frontendImpacts array if you've EXHAUSTIVELY searched ALL possible variations and found ABSOLUTELY NO impacts
-
-DO NOT STOP SEARCHING UNTIL:
-1. You have searched for every API element from every backend change
-2. You have tried different search patterns (exact match, partial match, related terms)
-3. You have checked common locations (API clients, GraphQL queries, REST calls, type definitions, models)
-4. You are CERTAIN there are no impacts
-
-If you're approaching token or step limits, include ALL impacts you've found so far in your output - do not return empty array unless you've completed an exhaustive search of ALL backend changes and ALL possible search patterns.`;
+CRITICAL WORKFLOW RULE:
+- Search → If results → MUST read files → Analyze → Then search next term
+- You CANNOT skip reading files after search_code returns results
+- You CANNOT output 0 impacts without reading files where search_code found matches
+- Complete search for all API terms, but be efficient - analyze at high level, don't explore implementation details.`;
 }
