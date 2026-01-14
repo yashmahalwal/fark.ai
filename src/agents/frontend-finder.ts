@@ -1,47 +1,24 @@
-import { generateText, Output } from "ai";
+import { generateText, stepCountIs, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
-import { backendChangesSchema } from "./be-analyzer";
 import pino from "pino";
+import { getFrontendFinderPrompt } from "../utils/get-frontend-finder-prompt";
+import {
+  frontendFinderInputSchema,
+  frontendImpactsSchema,
+  type FrontendFinderInput,
+  type FrontendImpactsOutput,
+} from "../schemas/frontend-finder-schema";
 
-// Shared frontend repo schema
-export const frontendRepoSchema = z.object({
-  owner: z.string().describe("Frontend repository owner"),
-  repo: z.string().describe("Frontend repository name"),
-  branch: z
-    .string()
-    .default("main")
-    .describe("Branch name (defaults to 'main')"),
-});
-
-// Input schema
-const frontendFinderInputSchema = z.object({
-  frontendRepo: frontendRepoSchema,
-  backendChanges: backendChangesSchema,
-});
-
-// Output schema - export item schema for reuse
-export const frontendImpactItemSchema = z.object({
-  repo: z.string().describe("Frontend repository name"),
-  file: z.string().describe("File path in frontend repo"),
-  line: z.number().describe("Line number where the reference occurs"),
-  reference: z
-    .string()
-    .describe("The API term being referenced (e.g., 'User.email')"),
-  severity: z
-    .enum(["high", "medium", "low"])
-    .describe(
-      "Severity of the impact (high = breaking, medium = may break, low = minor)"
-    ),
-  suggestedFix: z.string().describe("Suggested fix for the frontend code"),
-});
-
-export const frontendImpactsSchema = z.object({
-  frontendImpacts: z.array(frontendImpactItemSchema),
-});
-
-export type FrontendFinderInput = z.infer<typeof frontendFinderInputSchema>;
-export type FrontendImpactsOutput = z.infer<typeof frontendImpactsSchema>;
+// Re-export schemas for backward compatibility
+export {
+  frontendRepoSchema,
+  frontendFinderInputSchema,
+  frontendImpactItemSchema,
+  frontendImpactsSchema,
+  type FrontendFinderInput,
+  type FrontendImpactsOutput,
+} from "../schemas/frontend-finder-schema";
 
 /**
  * Agent 2: Frontend Impact Finder
@@ -51,45 +28,35 @@ export async function findFrontendImpacts(
   input: FrontendFinderInput,
   tools: Record<string, any>,
   openaiApiKey: string,
-  logger: pino.Logger = pino()
+  logger: pino.Logger = pino(),
+  options?: {
+    maxSteps?: number;
+    maxOutputTokens?: number;
+    maxTotalTokens?: number;
+  }
 ): Promise<FrontendImpactsOutput> {
-  logger.debug(
-    {
-      frontendRepo: `${input.frontendRepo.owner}/${input.frontendRepo.repo}`,
-      branch: input.frontendRepo.branch,
-      backendChangesCount: input.backendChanges.backendChanges.length,
-    },
-    "Frontend Finder: Starting analysis"
-  );
-
-  // Validate inputs
-  if (!input) {
-    throw new Error("Input is required");
+  // Validate inputs using Zod
+  let validatedInput: FrontendFinderInput;
+  try {
+    validatedInput = frontendFinderInputSchema.parse(input);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const errorMessages = error.issues.map((issue) => {
+        const path = issue.path.join(".");
+        return `${path}: ${issue.message}`;
+      });
+      logger.error(
+        {
+          validationErrors: error.issues,
+          errorMessages,
+        },
+        "Frontend Finder: Input validation failed"
+      );
+    }
+    throw error;
   }
 
-  if (!input.frontendRepo) {
-    throw new Error("Input.frontendRepo is required");
-  }
-
-  if (
-    !input.frontendRepo.owner ||
-    typeof input.frontendRepo.owner !== "string"
-  ) {
-    throw new Error(
-      "Input.frontendRepo.owner is required and must be a string"
-    );
-  }
-
-  if (!input.frontendRepo.repo || typeof input.frontendRepo.repo !== "string") {
-    throw new Error("Input.frontendRepo.repo is required and must be a string");
-  }
-
-  // Branch is optional and defaults to "main" via schema
-
-  if (!Array.isArray(input.backendChanges)) {
-    throw new Error("Input.backendChanges is required and must be an array");
-  }
-
+  // Validate other parameters
   if (!tools || Object.keys(tools).length === 0) {
     throw new Error("Tools are required and must not be empty");
   }
@@ -104,7 +71,16 @@ export async function findFrontendImpacts(
     );
   }
 
-  const { frontendRepo, backendChanges } = input;
+  const { frontendRepo, backendChanges } = validatedInput;
+
+  logger.debug(
+    {
+      frontendRepo: `${frontendRepo.owner}/${frontendRepo.repo}`,
+      branch: frontendRepo.branch,
+      backendChangesCount: backendChanges.backendChanges.length,
+    },
+    "Frontend Finder: Starting analysis"
+  );
   logger.info(
     {
       owner: frontendRepo.owner,
@@ -115,69 +91,7 @@ export async function findFrontendImpacts(
     `Frontend Finder: Analyzing ${frontendRepo.owner}/${frontendRepo.repo} (branch: ${frontendRepo.branch}) for ${backendChanges.backendChanges.length} backend changes`
   );
 
-  const prompt = `Find frontend code in ${frontendRepo.owner}/${
-    frontendRepo.repo
-  } (branch: ${
-    frontendRepo.branch
-  }) that is impacted by these backend API changes:
-
-Backend Changes (complete structured data):
-${JSON.stringify(backendChanges, null, 2)}
-
-Each backend change includes structured information - use the appropriate fields based on impact type:
-- Field renames: oldFieldName and newFieldName (search for oldFieldName)
-- Field removals/additions: fieldName
-- Endpoint changes: oldEndpointPath and/or newEndpointPath
-- Parameter changes: parameterName
-- Type changes: fieldName, oldType, newType
-- Status code changes: oldStatusCode, newStatusCode
-- Enum value additions/removals: enumName, enumValue (CRITICAL for strictly compiled languages)
-- Nullable/required changes: fieldName, wasNullable, isNowNullable
-- Array/object structure changes: fieldName, oldArrayStructure, newArrayStructure, oldObjectStructure, newObjectStructure
-- Default value changes: fieldName, oldDefaultValue, newDefaultValue
-- Union type extensions: fieldName, newUnionType
-
-Process:
-1. For each backend change, extract the API terms to search for:
-   - Use the structured fields provided based on the impact type
-   - For field renames: search for oldFieldName (what needs to be updated)
-   - For field removals: search for fieldName
-   - For endpoint changes: search for oldEndpointPath
-   - For enum value additions (enumValueAdded): search for enumName - this is CRITICAL for strictly compiled languages (Swift enums, Kotlin sealed classes, TypeScript strict enums, Rust enums, Go constants) as they will fail during deserialization if the new value isn't handled. JavaScript clients are unaffected.
-   - For enum value removals (enumValueRemoved): search for enumName and enumValue
-   - For nullableToRequired: search for fieldName (clients expecting optional fields will fail deserialization when field becomes required)
-   - For array/object structure changes: search for fieldName
-   - Use these terms to search in the client code
-2. Search the client repository efficiently:
-   - Explore repository structure to identify directories likely containing API calls (e.g., api/, services/, utils/, hooks/, components that make API calls)
-   - For strictly typed languages (TypeScript strict, Swift, Kotlin, Rust, Go), check for enum/sealed class/union definitions, model files, and serialization/deserialization code
-   - For each API term from backend changes, search for references in relevant files
-   - Read only the necessary files or file sections where references are found
-   - Do not read entire repository - focus on files that likely contain API usage
-3. For each match found, determine:
-   - File path and line number where the reference occurs
-   - The specific API term/reference found
-   - Severity: high (breaking change causing deserialization failures/crashes in strictly typed clients), medium (may break), low (minor issue)
-   - A clear suggested fix
-
-CRITICAL: Focus on deserialization-breaking changes for strictly compiled languages:
-- For enumValueAdded: Check if the enum is strictly typed (Swift enum, Kotlin sealed class, TypeScript strict enum, Rust enum, Go constants) - these will fail deserialization if new values aren't handled. JavaScript clients ignore unknown enum values.
-- For nullableToRequired: Check if the field is marked as optional/nullable in the client type definition - making it required breaks deserialization when the field is missing
-- For arrayStructureChanged: Check array/collection type definitions - structure changes break deserialization due to type mismatches
-- For enumValueRemoved: Check if the removed enum value is referenced in switch/case, when expressions, or pattern matching - will cause compile-time or runtime errors
-- For objectStructureChanged: Check object/struct type definitions - structure changes break property mapping during deserialization
-- For typeChanged: Check type definitions - type changes break deserialization when types don't match
-- For requiredToNullable: Can break clients expecting non-null values (null pointer exceptions, type errors)
-
-The key insight: JavaScript and other loosely typed languages are flexible and won't break from many of these changes. However, strictly compiled languages (Swift, Kotlin, Rust, Go, etc.) will fail during deserialization when the API schema doesn't match the client's type definitions exactly.
-
-IMPORTANT:
-- Search efficiently - don't read entire repository
-- Focus on files that are likely to contain API calls/references
-- Only read file contents when references are found or likely to exist
-- Match API terms accurately (case-sensitive where relevant)
-
-Return all impacts found in this frontend repository. If no impacts are found, return an empty frontendImpacts array.`;
+  const prompt = getFrontendFinderPrompt(input);
 
   const openaiClient = createOpenAI({ apiKey: openaiApiKey });
 
@@ -185,25 +99,283 @@ Return all impacts found in this frontend repository. If no impacts are found, r
     schema: frontendImpactsSchema,
   });
 
-  logger.debug("Frontend Finder: Calling OpenAI to find impacts");
+  // Get limits from options with fallback defaults
+  const MAX_STEPS = options?.maxSteps || 30;
+  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2); // Force output generation 2 steps before limit
+  const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 50000;
+  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 400000; // Increased default for frontend finder
+  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85; // Force output at 85% of token limit
+
+  // Track total token usage across all steps
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  logger.info(
+    {
+      maxSteps: MAX_STEPS,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxTotalTokens: MAX_TOTAL_TOKENS,
+      toolsCount: Object.keys(tools).length,
+    },
+    "Frontend Finder: Starting analysis with OpenAI"
+  );
+
   const result = await generateText({
-    model: openaiClient("gpt-4o"),
+    model: openaiClient("gpt-5"),
     output: outputSpec,
     tools,
+    activeTools: ["get_file_contents", "search_code"], // Limit to read-only tools using AI SDK's activeTools
+    stopWhen: stepCountIs(MAX_STEPS), // Stop when model generates text or after max steps
+    maxOutputTokens: MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,
+    prepareStep: async ({ stepNumber, steps, messages }) => {
+      // Track token usage across steps
+      const stepUsage = steps.reduce(
+        (acc, step) => {
+          if (step.usage) {
+            return {
+              inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
+              outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
+            };
+          }
+          return acc;
+        },
+        { inputTokens: 0, outputTokens: 0 }
+      );
+      totalInputTokens = stepUsage.inputTokens;
+      totalOutputTokens = stepUsage.outputTokens;
+      const currentTotalTokens = totalInputTokens + totalOutputTokens;
+
+      // Warn if approaching token limits
+      if (currentTotalTokens > MAX_TOTAL_TOKENS * 0.8) {
+        logger.warn(
+          {
+            stepNumber,
+            currentTotalTokens,
+            maxTotalTokens: MAX_TOTAL_TOKENS,
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            percentage: Math.round(
+              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
+            ),
+          },
+          "Frontend Finder: Approaching total token limit"
+        );
+      }
+
+      // Force output generation when approaching token limit (85%)
+      // Only force if we've done substantial searching (at least 10 tool calls)
+      if (currentTotalTokens >= FORCE_OUTPUT_AT_TOKENS) {
+        const toolCallsCount = steps.reduce(
+          (count, step) => count + (step.toolCalls?.length || 0),
+          0
+        );
+        const hasDoneSubstantialSearching = toolCallsCount >= 10; // At least 10 tool calls means we've done substantial searching
+
+        logger.warn(
+          {
+            stepNumber,
+            currentTotalTokens,
+            maxTotalTokens: MAX_TOTAL_TOKENS,
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            percentage: Math.round(
+              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
+            ),
+            toolCallsCount,
+            hasDoneSubstantialSearching,
+          },
+          "Frontend Finder: Approaching token limit, checking if we should force output"
+        );
+
+        // Check if we already have output from previous steps
+        const hasOutput = steps.some(
+          (step) => step.text && step.text.trim().length > 0
+        );
+
+        // Only force output if we've done substantial searching OR we already have output
+        if (!hasOutput && hasDoneSubstantialSearching) {
+          // Force text generation by preventing tool calls
+          const reminderMessage = {
+            role: "user" as const,
+            content:
+              "CRITICAL: You are approaching the token limit (85%). You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
+          };
+
+          return {
+            toolChoice: "none", // Prevent tool calls, force text generation
+            messages: [...messages, reminderMessage],
+          };
+        }
+      }
+
+      // Abort if token limit exceeded
+      if (currentTotalTokens >= MAX_TOTAL_TOKENS) {
+        logger.error(
+          {
+            stepNumber,
+            currentTotalTokens,
+            maxTotalTokens: MAX_TOTAL_TOKENS,
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+          },
+          "Frontend Finder: Total token limit exceeded, aborting"
+        );
+        throw new Error(
+          `Token limit exceeded: ${currentTotalTokens} tokens used (limit: ${MAX_TOTAL_TOKENS})`
+        );
+      }
+
+      // When approaching step limit, force the model to generate output instead of calling tools
+      // Only force if we've done substantial searching (at least 10 tool calls)
+      if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
+        const toolCallsCount = steps.reduce(
+          (count, step) => count + (step.toolCalls?.length || 0),
+          0
+        );
+        const hasDoneSubstantialSearching = toolCallsCount >= 10; // At least 10 tool calls means we've done substantial searching
+
+        logger.warn(
+          {
+            stepNumber,
+            maxSteps: MAX_STEPS,
+            totalToolCalls: toolCallsCount,
+            stepsCompleted: steps.length,
+            hasDoneSubstantialSearching,
+          },
+          "Frontend Finder: Approaching step limit, checking if we should force output"
+        );
+
+        // Check if we already have output from previous steps
+        const hasOutput = steps.some(
+          (step) => step.text && step.text.trim().length > 0
+        );
+
+        // Only force output if we've done substantial searching OR we already have output
+        if (!hasOutput && hasDoneSubstantialSearching) {
+          // Force text generation by preventing tool calls
+          // Also add a reminder message to generate output
+          const reminderMessage = {
+            role: "user" as const,
+            content:
+              "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
+          };
+
+          return {
+            toolChoice: "none", // Prevent tool calls, force text generation
+            messages: [...messages, reminderMessage],
+          };
+        }
+      }
+
+      // Default: continue with normal execution
+      return {};
+    },
+    onStepFinish: ({ text, toolCalls, finishReason, usage }) => {
+      // Log tool calls
+      if (toolCalls && toolCalls.length > 0) {
+        toolCalls.forEach((tc) => {
+          logger.debug(
+            {
+              tool: tc.toolName,
+              input: tc.input,
+            },
+            `Frontend Finder: Tool call - ${tc.toolName}`
+          );
+        });
+      }
+
+      // Log any text output from model
+      if (text) {
+        logger.debug(
+          {
+            textLength: text.length,
+            finishReason: finishReason || undefined,
+          },
+          "Frontend Finder: Model generated text output"
+        );
+      }
+
+      // Log usage if available
+      if (usage) {
+        const stepTotal = (usage.inputTokens || 0) + (usage.outputTokens || 0);
+        logger.debug(
+          {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            stepTotal,
+          },
+          "Frontend Finder: Token usage"
+        );
+      }
+    },
   });
 
+  // With output spec, result.output will always be present or process exits with error
   if (!result.output) {
     logger.error(
+      {
+        totalSteps: result.steps?.length || 0,
+        finishReason: result.finishReason || undefined,
+      },
       "Frontend Finder: Failed to generate structured output from the model"
     );
     throw new Error("Failed to generate structured output from the model");
   }
 
-  logger.info(
-    `Frontend Finder: Analysis complete, found ${result.output.frontendImpacts.length} impacts`
-  );
-  logger.debug({ output: result.output }, "Frontend Finder: Output");
+  // Calculate final token usage
+  const finalUsage = result.steps?.reduce(
+    (acc, step) => {
+      if (step.usage) {
+        return {
+          inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
+          outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
+        };
+      }
+      return acc;
+    },
+    { inputTokens: 0, outputTokens: 0 }
+  ) || { inputTokens: 0, outputTokens: 0 };
+  const finalTotalTokens = finalUsage.inputTokens + finalUsage.outputTokens;
 
-  return result.output as FrontendImpactsOutput;
+  const impactCount = result.output.frontendImpacts.length;
+  logger.info(
+    {
+      impactCount,
+      totalSteps: result.steps?.length || 0,
+      finishReason: result.finishReason || undefined,
+      tokenUsage: {
+        inputTokens: finalUsage.inputTokens,
+        outputTokens: finalUsage.outputTokens,
+        totalTokens: finalTotalTokens,
+      },
+    },
+    `Frontend Finder: Analysis complete - found ${impactCount} impact${impactCount !== 1 ? "s" : ""}`
+  );
+
+  // Log each impact once
+  if (impactCount > 0) {
+    logger.info("Frontend Finder: Detected impacts details:");
+    result.output.frontendImpacts.forEach(
+      (
+        impact: FrontendImpactsOutput["frontendImpacts"][number],
+        index: number
+      ) => {
+        logger.info(
+          {
+            index: index + 1,
+            backendChangeId: impact.backendChangeId,
+            file: impact.file,
+            codeHunk: impact.codeHunk,
+            apiElement: impact.apiElement,
+            description: impact.description,
+            severity: impact.severity,
+          },
+          `Frontend Finder: Impact ${index + 1} - ${impact.severity}`
+        );
+      }
+    );
+  }
+
+  return result.output;
 }

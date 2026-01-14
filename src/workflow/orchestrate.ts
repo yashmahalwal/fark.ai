@@ -1,52 +1,23 @@
-import {
-  analyzeBackendDiff,
-  backendChangesSchema,
-  backendRepoSchema,
-} from "../agents/be-analyzer";
-import {
-  findFrontendImpacts,
-  frontendImpactItemSchema,
-  frontendRepoSchema,
-} from "../agents/frontend-finder";
+import { analyzeBackendDiff } from "../agents/be-analyzer";
 import { generatePRComments } from "../agents/comment-generator";
+import { findFrontendImpacts } from "../agents/frontend-finder";
 import { getBackendTools, getFrontendTools } from "../tools/github-tools";
 import pino from "pino";
 import { z } from "zod/v3";
+import {
+  orchestrateInputSchema,
+  backendChangeWithImpactsSchema,
+  type OrchestrateInput,
+  type OrchestrateOutput,
+} from "../schemas/orchestrate-schema";
+import { frontendImpactItemSchema } from "../schemas/frontend-finder-schema";
 
-// Input schema for orchestration - reuses schemas from agents
-const orchestrateInputSchema = z.object({
-  backend: backendRepoSchema,
-  frontendRepos: z.array(frontendRepoSchema),
-  beGithubToken: z
-    .string()
-    .describe("GitHub token for backend repository access"),
-  frontendGithubToken: z
-    .string()
-    .describe("GitHub token for frontend repository access"),
-  mcpServerUrl: z.string().describe("GitHub MCP server URL"),
-  openaiApiKey: z.string().describe("OpenAI API key"),
-  logLevel: z
-    .enum(["debug", "info", "warn", "error"])
-    .optional()
-    .default("info")
-    .describe("Log level (defaults to 'info')"),
-});
-
-export type OrchestrateInput = z.infer<typeof orchestrateInputSchema>;
-
-// Output type
-export type OrchestrateOutput = {
-  backendChanges: z.infer<typeof backendChangesSchema>;
-  allFrontendImpacts: z.infer<typeof frontendImpactItemSchema>[];
-  prComments: {
-    comments: Array<{
-      file: string;
-      line: number;
-      body: string;
-    }>;
-    summary: string;
-  };
-};
+// Re-export for backward compatibility
+export {
+  backendChangeWithImpactsSchema,
+  type OrchestrateInput,
+  type OrchestrateOutput,
+} from "../schemas/orchestrate-schema";
 
 /**
  * Orchestrates the complete Fark.ai workflow:
@@ -68,32 +39,20 @@ export async function runFarkAnalysis(
     mcpServerUrl,
     openaiApiKey,
     logLevel,
+    beAnalyzerOptions,
+    frontendFinderOptions,
   } = validatedInput;
-
-  // Create logger
-  const isGitHubActions = process.env.GITHUB_ACTIONS === "true";
-  const useJson = process.env.LOG_FORMAT === "json" || isGitHubActions;
 
   const logger = pino({
     level: logLevel,
-    ...(useJson
-      ? {
-          formatters: {
-            level: (label) => {
-              return { level: label };
-            },
-          },
-        }
-      : {
-          transport: {
-            target: "pino-pretty",
-            options: {
-              colorize: true,
-              translateTime: "HH:MM:ss Z",
-              ignore: "pid,hostname",
-            },
-          },
-        }),
+    transport: {
+      target: "pino-pretty",
+      options: {
+        colorize: true,
+        translateTime: "HH:MM:ss Z",
+        ignore: "pid,hostname",
+      },
+    },
   });
 
   logger.info(
@@ -122,20 +81,6 @@ export async function runFarkAnalysis(
   );
 
   // Step 2: Run Agent 1 - BE Diff Analyzer
-  // Read BE Analyzer configuration from environment variables
-  // Only allow these read-only tools: get_file_contents, search_code, pull_request_read
-  const beAnalyzerOptions = {
-    ...(process.env.BE_ANALYZER_MAX_STEPS && {
-      maxSteps: parseInt(process.env.BE_ANALYZER_MAX_STEPS, 10),
-    }),
-    ...(process.env.BE_ANALYZER_MAX_OUTPUT_TOKENS && {
-      maxOutputTokens: parseInt(process.env.BE_ANALYZER_MAX_OUTPUT_TOKENS, 10),
-    }),
-    ...(process.env.BE_ANALYZER_MAX_TOTAL_TOKENS && {
-      maxTotalTokens: parseInt(process.env.BE_ANALYZER_MAX_TOTAL_TOKENS, 10),
-    }),
-  };
-
   logger.info("Step 1: Analyzing backend diff for API breaking changes");
   const backendChangesResult = await analyzeBackendDiff(
     { backend },
@@ -147,14 +92,12 @@ export async function runFarkAnalysis(
   logger.info(
     `Backend analysis complete: ${backendChangesResult.backendChanges.length} breaking changes detected`
   );
-  logger.debug({ changes: backendChangesResult }, "Backend changes");
 
   // Step 3: Early exit if no backend changes
   if (backendChangesResult.backendChanges.length === 0) {
     logger.info("No API breaking changes detected, exiting early");
     return {
-      backendChanges: backendChangesResult,
-      allFrontendImpacts: [],
+      changes: [],
       prComments: {
         comments: [],
         summary: "No API breaking changes detected in this PR.",
@@ -166,24 +109,26 @@ export async function runFarkAnalysis(
   logger.info(
     `Step 2: Analyzing ${frontendRepos.length} frontend repository/repositories for impacts`
   );
+
   const allFrontendImpacts: z.infer<typeof frontendImpactItemSchema>[] = [];
+
+  logger.debug(`Initializing frontend github tools `);
+  const { tools: frontendTools } = await getFrontendTools(
+    frontendGithubToken,
+    mcpServerUrl
+  );
 
   for (const frontendRepo of frontendRepos) {
     const repoId = `${frontendRepo.owner}/${frontendRepo.repo}`;
-    logger.info(
-      {
-        owner: frontendRepo.owner,
-        repo: frontendRepo.repo,
-        branch: frontendRepo.branch,
-      },
-      `Analyzing frontend repo: ${repoId} (branch: ${frontendRepo.branch})`
-    );
 
     try {
-      logger.debug({ repoId }, `Initializing frontend tools for ${repoId}`);
-      const { tools: frontendTools } = await getFrontendTools(
-        frontendGithubToken,
-        mcpServerUrl
+      logger.info(
+        {
+          owner: frontendRepo.owner,
+          repo: frontendRepo.repo,
+          branch: frontendRepo.branch,
+        },
+        `Analyzing frontend repo: ${frontendRepo.owner}/${frontendRepo.repo} (branch: ${frontendRepo.branch})`
       );
 
       const frontendImpactsResult = await findFrontendImpacts(
@@ -193,22 +138,17 @@ export async function runFarkAnalysis(
         },
         frontendTools,
         openaiApiKey,
-        logger
+        logger,
+        frontendFinderOptions
       );
 
       logger.info(
         { repoId, impactCount: frontendImpactsResult.frontendImpacts.length },
         `Frontend analysis for ${repoId} complete: ${frontendImpactsResult.frontendImpacts.length} impacts found`
       );
-      logger.debug(
-        { repoId, impacts: frontendImpactsResult.frontendImpacts },
-        `Impacts for ${repoId}`
-      );
 
-      // Add impacts from this repo to the combined array
       allFrontendImpacts.push(...frontendImpactsResult.frontendImpacts);
     } catch (error) {
-      // Log error but continue with other repos
       logger.error(
         {
           repoId,
@@ -216,7 +156,6 @@ export async function runFarkAnalysis(
         },
         `Failed to analyze frontend repo ${repoId}:`
       );
-      // Continue to next repo
     }
   }
 
@@ -225,30 +164,61 @@ export async function runFarkAnalysis(
     `Frontend analysis complete: ${allFrontendImpacts.length} total impacts across all repos`
   );
 
-  // Step 5: Run Agent 3 - PR Comment Generator
-  logger.info("Step 3: Generating PR comments");
+  // Step 5: Group frontend impacts by backend change ID (optimized)
+  // Create a Map for O(1) lookups instead of O(n) filter for each backend change
+  const impactsByBackendChangeId = new Map<
+    string,
+    z.infer<typeof frontendImpactItemSchema>[]
+  >();
+
+  // Initialize map with empty arrays for all backend changes
+  backendChangesResult.backendChanges.forEach((backendChange) => {
+    impactsByBackendChangeId.set(backendChange.id, []);
+  });
+
+  // Group impacts by backend change ID in a single pass
+  allFrontendImpacts.forEach((impact) => {
+    const impacts = impactsByBackendChangeId.get(impact.backendChangeId);
+    if (impacts) {
+      impacts.push(impact);
+    } else {
+      logger.warn(
+        {
+          impact,
+          backendChangeIds: backendChangesResult.backendChanges.map(
+            (c) => c.id
+          ),
+        },
+        `Frontend impact ${impact.apiElement} references unknown backend change ID: ${impact.backendChangeId}`
+      );
+    }
+  });
+
+  // Map backend changes with their grouped impacts
+  const changesWithImpacts = backendChangesResult.backendChanges.map(
+    (backendChange) => ({
+      ...backendChange,
+      frontendImpacts: impactsByBackendChangeId.get(backendChange.id) || [],
+    })
+  );
+
+  // Step 6: Run Agent 3 - PR Comment Generator (posts comments directly)
+  logger.info("Step 3: Generating and posting PR comments");
   const prComments = await generatePRComments(
     {
-      backendChanges: backendChangesResult.backendChanges,
-      frontendImpacts: allFrontendImpacts,
+      changes: changesWithImpacts,
       backend_owner: backend.owner,
       backend_repo: backend.repo,
       pull_number: backend.pull_number,
     },
+    backendTools,
     openaiApiKey,
     logger
   );
-  logger.info(
-    { commentCount: prComments.comments.length },
-    `PR comment generation complete: ${prComments.comments.length} comments generated`
-  );
-  logger.debug({ comments: prComments }, "PR comments");
 
-  // Step 6: Return results
   logger.info("Fark.ai analysis workflow completed successfully");
   return {
-    backendChanges: backendChangesResult,
-    allFrontendImpacts,
+    changes: changesWithImpacts,
     prComments,
   };
 }
