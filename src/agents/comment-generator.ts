@@ -44,10 +44,7 @@ export async function generatePRComments(
     );
   }
 
-  // Validate tools
-  if (!tools || Object.keys(tools).length === 0) {
-    throw new Error("Tools are required and must not be empty");
-  }
+  // Tools are optional - comment generator just generates comments, doesn't post them
 
   const { changes, backend_owner, backend_repo, pull_number } = validatedInput;
 
@@ -97,14 +94,8 @@ export async function generatePRComments(
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-5"),
+    model: openaiClient("gpt-4o"),
     output: outputSpec,
-    tools,
-    activeTools: [
-      "pull_request_read",
-      "pull_request_review_write",
-      "add_comment_to_pending_review",
-    ],
     stopWhen: stepCountIs(MAX_STEPS),
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     prompt,
@@ -308,20 +299,36 @@ export async function generatePRComments(
     `Comment Generator: Generation complete, created ${result.output.comments.length} comments`
   );
 
-  // Log each comment once
+  // Log summary at info level (important output)
+  logger.info(
+    {
+      summary: result.output.summary.substring(0, 200) + (result.output.summary.length > 200 ? "..." : ""),
+      summaryLength: result.output.summary.length,
+    },
+    "Comment Generator: Generated summary"
+  );
+
+  // Log each comment once with full details
   if (result.output.comments.length > 0) {
     logger.info("Comment Generator: Generated comments details:");
     result.output.comments.forEach((comment, index) => {
       logger.info(
         {
           index: index + 1,
-          file: comment.file,
-          line: comment.line,
+          path: comment.path,
+          startLine: comment.startLine,
+          endLine: comment.endLine,
+          startSide: comment.startSide,
+          endSide: comment.endSide,
           bodyLength: comment.body.length,
+          bodyPreview: comment.body.substring(0, 200) + (comment.body.length > 200 ? "..." : ""),
         },
-        `Comment Generator: Comment ${index + 1} - ${comment.file}:${comment.line}`
+        `Comment Generator: Comment ${index + 1} - ${comment.path}:${comment.startLine}${comment.endLine !== comment.startLine ? `-${comment.endLine}` : ""}`
       );
+      logger.debug({ body: comment.body }, "Comment Generator: Full comment body");
     });
+  } else {
+    logger.warn("Comment Generator: No comments generated - comments array is empty");
   }
 
   return result.output as PRCommentsOutput;

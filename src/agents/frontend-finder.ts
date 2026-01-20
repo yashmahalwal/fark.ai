@@ -353,7 +353,7 @@ export async function findFrontendImpacts(
     `Frontend Finder: Analysis complete - found ${impactCount} impact${impactCount !== 1 ? "s" : ""}`
   );
 
-  // Log each impact once
+  // Log each impact once with full details
   if (impactCount > 0) {
     logger.info("Frontend Finder: Detected impacts details:");
     result.output.frontendImpacts.forEach(
@@ -365,12 +365,13 @@ export async function findFrontendImpacts(
           {
             index: index + 1,
             backendChangeId: impact.backendChangeId,
+            frontendRepo: impact.frontendRepo,
             file: impact.file,
             apiElement: impact.apiElement,
             description: impact.description,
             severity: impact.severity,
           },
-          `Frontend Finder: Impact ${index + 1} - ${impact.severity}`
+          `Frontend Finder: Impact ${index + 1} - ${impact.severity} severity in ${impact.frontendRepo}`
         );
       }
     );

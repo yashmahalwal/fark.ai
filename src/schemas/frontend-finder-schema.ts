@@ -2,6 +2,8 @@ import { z } from "zod/v3";
 import { backendChangesSchema } from "./be-analyzer-schema";
 
 // Shared frontend repo schema
+// Note: branch is required (not optional) for AI SDK schema validation
+// Defaults are handled in the orchestration layer before passing to the agent
 export const frontendRepoSchema = z.object({
   owner: z.string().min(1).describe("Frontend repository owner"),
   repo: z.string().min(1).describe("Frontend repository name"),
@@ -24,6 +26,11 @@ export const frontendImpactItemSchema = z.object({
     .string()
     .describe(
       "ID of the backend change that caused this impact (references backendChange.id)"
+    ),
+  frontendRepo: z
+    .string()
+    .describe(
+      "Frontend repository identifier in format 'owner/repo:branch' (e.g., 'yashmahalwal/fark-frontend-demo:main'). Branch defaults to 'main' if not specified."
     ),
   file: z.string().describe("File path in frontend repo where impact occurs"),
   apiElement: z

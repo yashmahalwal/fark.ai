@@ -13,45 +13,37 @@ export function getFrontendFinderPrompt(input: FrontendFinderInput): string {
 
 ${JSON.stringify(backendChanges.backendChanges, null, 2)}
 
-CRITICAL: Only report impacts where the backend change will ACTUALLY BREAK the frontend code. Use the backend change's impact type and description to determine if frontend code is affected.
+CRITICAL: Only report impacts where the backend change will ACTUALLY BREAK the frontend code.
 
 WORKFLOW:
-1. Extract unique API terms from ALL backend changes (impact type, description, diffHunks)
-2. For each unique API term, search ONCE using specific terms (e.g., "User.email" not "email")
-3. CRITICAL: After EVERY search_code call:
-   - Check if it returned any results (files/matches)
-   - If results exist: You MUST call get_file_contents to read those files BEFORE proceeding
-   - Do NOT make another search_code call until you've read and analyzed files from the previous search
-   - You CANNOT determine if there are impacts without reading the files
-4. Analyze each file against backend changes to determine if it breaks
-5. Only after reading ALL files where search_code found matches, output impacts with: backendChangeId, file, apiElement, description, severity
+1. Extract API elements: REST endpoints, GraphQL queries/mutations, field names, types/interfaces
+2. Discover files: Read directory structure to understand codebase organization and find API-related code
+3. Read a few relevant files: API clients, network layer, data models, serialization code, any code that uses backend API
+4. Analyze: Check if backend changes break the frontend code
+5. Output: High-level confirmation with summary of breaking impacts
 
-SEARCH RULES:
-- Search each unique API term ONCE - do not repeat or search variations (e.g., if you searched "orders", don't search "order" or "Order")
-- Do not search overly broad terms (e.g., "fetch(" or "axios")
-- If search returns no results, move to next term - don't try variations
-- Track what you've searched to avoid redundant work
+EFFICIENCY - STOP AFTER FINDING IMPACTS:
+- Read directory structure first, then read a few relevant files (not all files)
+- Once you find files that will break, analyze them and output results - don't keep reading more files
+- Goal: Confirm that breaking impacts exist, not to find every single breaking change
+- Use line ranges when possible, read entire files only if needed
+- Focus on API-related code only - skip tests, implementation details, unrelated code
+- OPTIONAL: search_code available but unreliable (GitHub indexing incomplete, rate limits) - use sparingly, sequentially
 
-FILE READING:
-- Read ONLY files returned by search_code (use line ranges when possible, entire files only if needed)
-- Do NOT explore directories or file structures - only read specific files where matches were found
-- Do NOT call get_file_contents on directories (exception: only when absolutely necessary)
-- Do NOT explore related files, imports, or implementation details
-
-ANALYSIS:
-- Use backend change description directly - it explains what changed
-- Consider backward compatibility - changes breaking older clients are breaking, especially for compiled languages
-- Determine if change breaks frontend code based on impact type and description
-- Report each impact and move on - don't dig deeper
+DISCOVERY (Language-agnostic - works for any frontend: web, mobile, desktop):
+- Common locations: api/, services/, network/, data/, models/, repositories/, clients/, http/, rest/, graphql/
+- Look for: HTTP/network requests, API clients, data models, serialization/deserialization code, GraphQL queries
+- Language-specific patterns:
+  * Web (JS/TS): api/, services/, hooks/, stores/, components/
+  * Android (Kotlin/Java): network/, api/, repositories/, data/, models/
+  * iOS (Swift): network/, api/, services/, models/, repositories/
+  * Any: files making HTTP requests, defining API contracts, serializing/deserializing API responses
+- Process: Read directory listings → find a few relevant files → read files → analyze → report
+- STOP after finding and analyzing some breaking impacts - don't read everything
 
 OUTPUT:
-- Return object with frontendImpacts array
-- Each entry: backendChangeId, file, apiElement, description (high-level), severity (high/medium/low)
-- Return empty array only if no breaking impacts found after reading ALL files where search_code found matches
-
-CRITICAL WORKFLOW RULE:
-- Search → If results → MUST read files → Analyze → Then search next term
-- You CANNOT skip reading files after search_code returns results
-- You CANNOT output 0 impacts without reading files where search_code found matches
-- Complete search for all API terms, but be efficient - analyze at high level, don't explore implementation details.`;
+- frontendImpacts array with: backendChangeId, frontendRepo, file, apiElement, description (high-level summary), severity
+- frontendRepo: Must be a string in format "owner/repo:branch" (e.g., "${owner}/${repo}:${branch}"). Branch defaults to "main" if not specified.
+- Focus on confirming that breaking impacts exist, not exhaustive enumeration
+- Return empty array only if no impacts found after checking a reasonable sample of files`;
 }

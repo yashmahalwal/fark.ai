@@ -26,6 +26,16 @@ export const backendChangeItemSchema = z.object({
     z.object({
       startLine: z.number().describe("Starting line number in the diff"),
       endLine: z.number().describe("Ending line number in the diff"),
+      startSide: z
+        .enum(["LEFT", "RIGHT"])
+        .describe(
+          "Side of diff for startLine: LEFT=old file (removed lines), RIGHT=new file (added lines)"
+        ),
+      endSide: z
+        .enum(["LEFT", "RIGHT"])
+        .describe(
+          "Side of diff for endLine: LEFT=old file (removed lines), RIGHT=new file (added lines)"
+        ),
       changes: z.array(z.string()).describe("Array of diff lines"),
     })
   ),

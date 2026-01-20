@@ -55,11 +55,14 @@ export const backendChangeWithImpactsSchema = backendChangeItemSchema.extend({
 export type OrchestrateOutput = {
   changes: z.infer<typeof backendChangeWithImpactsSchema>[];
   prComments: {
+    summary: string;
     comments: Array<{
-      file: string;
-      line: number;
+      path: string;
+      startLine: number; // Start line number from diff (must be > 0)
+      endLine: number; // End line number from diff (must be > 0). For single-line comments, same as startLine
+      side: "LEFT" | "RIGHT"; // "RIGHT" as default
+      startSide: "LEFT" | "RIGHT"; // "RIGHT" as default
       body: string;
     }>;
-    summary: string;
   };
 };

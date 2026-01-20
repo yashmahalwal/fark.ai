@@ -32,60 +32,50 @@ COMMENT FORMAT:
 
 Comment must contain proper markdown formatting for code, headings, lists and emphasis. Comments should be concise and to the point.
 
-WORKFLOW (Follow EXACTLY - do NOT deviate):
-1. Get PR head SHA:
-   - \`pull_request_read\` method="get" → extract head.sha (needed for commitID)
-   - The backend changes already contain diff coordinates in change.diffHunks
+WORKFLOW:
+1. Extract coordinates per change:
+   - path: change.file (repo-relative file path) - REQUIRED
+   - ⚠️ CRITICAL: startLine, endLine, startSide, and endSide MUST come from change.diffHunks[0]
+   - ⚠️ These are line numbers and sides from the PR diff blob (from BE Analyzer output) - use them exactly as provided
+   - startLine: change.diffHunks[0].startLine - Use the startLine from the diffHunk (line number in diff blob). For single-line comments, set both startLine and endLine to the same line number.
+   - endLine: change.diffHunks[0].endLine - Use the endLine from the diffHunk (line number in diff blob). For single-line comments, set both startLine and endLine to the same line number.
+   - startSide: change.diffHunks[0].startSide - Use the startSide from the diffHunk ("LEFT" for old file/removed lines, "RIGHT" for new file/added lines)
+   - endSide: change.diffHunks[0].endSide - Use the endSide from the diffHunk ("LEFT" for old file/removed lines, "RIGHT" for new file/added lines)
+   - ⚠️ Do NOT modify or recalculate these values - use them exactly as provided by BE Analyzer
+   - body: Comment text - REQUIRED
 
-2. Extract coordinates per change:
-   - Use change.file for path (repo-relative file path)
-   - Use change.diffHunks[0].startLine for line (diff blob line number)
-   - Use change.diffHunks[0].endLine if you need the end of range (for multi-line comments)
-   - side: "RIGHT" (for new code in diff)
-   - For multi-line: use startLine from diffHunks[0], endLine from diffHunks[0]
-   - use subjectType: "LINE" for inline comments
-   - If diffHunks unavailable or empty → use subjectType: "FILE" or skip inline placement
+2. Generate comment body for each change:
+   - Use the COMMENT FORMAT below
+   - Group frontend impacts by repo: Extract owner/repo and branch from frontendRepo string (format: "owner/repo:branch")
+   - Format: **[owner/repo]** (branch: branch): \`[file]\` - [How it breaks] (severity: \`[severity]\`)
+   - Example: If frontendRepo is "yashmahalwal/fark-frontend-demo:main", use "**yashmahalwal/fark-frontend-demo** (branch: main): \`src/api.ts\` - [description] (severity: \`high\`)
+   - Make comments concise and clear
 
-3. Create pending review (DRAFT - NOT submitted):
-   - \`pull_request_review_write\` method="create"
-   - owner: "${backend_owner}", repo: "${backend_repo}", pullNumber: ${pull_number}
-   - commitID: head.sha (REQUIRED)
-   - CRITICAL: Do NOT include event parameter - omitting event creates a pending/draft review
-   - Do NOT set event: "COMMENT" here - that would submit the review immediately
-   - This creates a DRAFT review that you will submit later
+3. Generate summary:
+   - Markdown summary of all breaking changes
+   - Include count of changes and key highlights
 
-4. Add inline comments:
-   - Call \`add_comment_to_pending_review\` for EVERY change
-   - Required params: owner, repo, pullNumber, path, subjectType, body
-   - For subjectType: "LINE": also include side, line (and startLine/startSide if multi-line)
-   - For subjectType: "FILE": no line/side params
-   - ALWAYS set subjectType and side/startSide explicitly
+4. Return output:
+   - summary: Markdown summary text (REQUIRED)
+   - comments: Array of comment objects (REQUIRED)
+   - Each comment object MUST include ALL fields: path, startLine, endLine, startSide, endSide, body
+   - ALL line numbers MUST be positive integers (no 0 values):
+     * startLine: Actual start line number from diffHunks[0].startLine (REQUIRED, must be > 0)
+     * endLine: Actual end line number from diffHunks[0].endLine (REQUIRED, must be > 0). For single-line comments, set both startLine and endLine to the same line number.
+     * startSide: Actual start side from diffHunks[0].startSide ("LEFT" or "RIGHT", REQUIRED)
+     * endSide: Actual end side from diffHunks[0].endSide ("LEFT" or "RIGHT", REQUIRED)
 
-5. Submit the pending review (AFTER all comments are added):
-   - IMPORTANT: \`pull_request_review_write\` method="submit_pending" (NOT "create")
-   - owner: "${backend_owner}", repo: "${backend_repo}", pullNumber: ${pull_number}
-   - event: "COMMENT"
-   - body: Markdown summary:
-     ## Breaking API Changes Detected
-     
-     Found **${changes.length}** breaking API changes. See inline comments for details.
-     
-     **Summary:**
-     - [Key changes summary]
-   - This submits the pending review created in step 3
-
-6. Return comments array in output schema
-
-CRITICAL RULES:
-1. Step 1: Get head.sha from pull_request_read (method="get") - needed for commitID
-2. Step 2: Use coordinates from backend changes (change.file, change.diffHunks[0].startLine/endLine)
-3. Step 3: Create pending review with method="create" and NO event parameter (creates draft)
-4. Step 4: Add all inline comments to the pending review
-5. Step 5: Submit pending review with method="submit_pending" and event="COMMENT"
-6. Do NOT create a review with event: "COMMENT" in step 3 - that submits it immediately
-7. Do NOT create multiple reviews - create ONE pending review, add comments, then submit it
-8. Always set subjectType ("LINE" or "FILE")
-9. Always set side/startSide for LINE comments (use "RIGHT" for new code)
-10. Post comments for ALL changes (if 8 changes, make 8 calls)
-11. Use proper markdown in summary (##, **, -)`;
+OUTPUT REQUIREMENTS:
+- Generate comments for ALL changes in the 'changes' array
+- ALL fields are REQUIRED:
+  * startLine: Actual start line number from diffHunks[0].startLine (MUST be > 0, no file-level comments)
+  * endLine: Actual end line number from diffHunks[0].endLine (MUST be > 0, no file-level comments). For single-line comments, same as startLine.
+  * startSide: Actual start side from diffHunks[0].startSide ("LEFT" or "RIGHT", REQUIRED)
+  * endSide: Actual end side from diffHunks[0].endSide ("LEFT" or "RIGHT", REQUIRED)
+- Group frontend impacts by repo in the comment body
+- Extract owner/repo and branch from frontendRepo string (format: "owner/repo:branch", e.g., "yashmahalwal/fark-frontend-demo:main")
+- Format: **[owner/repo]** (branch: branch): [file] - [description] ([severity])
+- Example: frontendRepo "yashmahalwal/fark-frontend-demo:main" → "**yashmahalwal/fark-frontend-demo** (branch: main): src/api.ts - [description] (high)"
+- Use proper markdown in comments and summary (##, **, -, code blocks)
+- Return summary and comments array`;
 }

@@ -345,17 +345,26 @@ export async function analyzeBackendDiff(
     `BE Analyzer: Analysis complete - found ${changeCount} breaking change${changeCount !== 1 ? "s" : ""} across ${filesAffected} file${filesAffected !== 1 ? "s" : ""}`
   );
 
-  // Log each breaking change once
+  // Log each breaking change once with full details
   if (changeCount > 0) {
+    logger.info("BE Analyzer: Detected breaking changes details:");
     result.output.backendChanges.forEach((change) => {
       logger.info(
         {
           id: change.id,
           impact: change.impact,
           file: change.file,
+          diffHunksCount: change.diffHunks.length,
           description: change.description,
+          diffHunks: change.diffHunks.map((hunk) => ({
+            startLine: hunk.startLine,
+            endLine: hunk.endLine,
+            startSide: hunk.startSide,
+            endSide: hunk.endSide,
+            changesCount: hunk.changes.length,
+          })),
         },
-        `BE Analyzer: Change ${change.id} - ${change.impact}`
+        `BE Analyzer: Change ${change.id} - ${change.impact} in ${change.file}`
       );
     });
   }
