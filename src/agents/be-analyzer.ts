@@ -9,6 +9,8 @@ import {
   type BackendInput,
   type BackendChangesOutput,
 } from "../schemas/be-analyzer-schema";
+import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
+import { getBackendTools } from "../tools/github-tools";
 
 // Re-export schemas for backward compatibility
 export {
@@ -22,18 +24,12 @@ export {
 
 /**
  * Agent 1: BE Diff Analyzer
- * Extracts API interface changes from PR diff using GitHub MCP tools and OpenAI reasoning
+ * Extracts API interface changes from PR diff using GitHub MCP tools (for PR) and filesystem tools (for code reading)
  */
+
 export async function analyzeBackendDiff(
   input: BackendInput,
-  tools: Record<string, any>,
-  openaiApiKey: string,
-  logger: pino.Logger = pino(),
-  options?: {
-    maxSteps?: number;
-    maxOutputTokens?: number;
-    maxTotalTokens?: number;
-  }
+  logger: pino.Logger = pino()
 ): Promise<BackendChangesOutput> {
   // Validate inputs using Zod
   let validatedInput: BackendInput;
@@ -56,11 +52,8 @@ export async function analyzeBackendDiff(
     throw error;
   }
 
-  // Validate other parameters
-  if (!tools || Object.keys(tools).length === 0) {
-    throw new Error("Tools are required and must not be empty");
-  }
-
+  const { repository, codebasePath, githubMcp, openaiApiKey, options } =
+    validatedInput;
   if (
     !openaiApiKey ||
     typeof openaiApiKey !== "string" ||
@@ -70,15 +63,30 @@ export async function analyzeBackendDiff(
       "OpenAI API key is required and must be a non-empty string"
     );
   }
-
-  const { backend } = validatedInput;
   logger.info(
     {
-      pull_number: backend.pull_number,
-      owner: backend.owner,
-      repo: backend.repo,
+      pull_number: repository.pull_number,
+      owner: repository.owner,
+      repo: repository.repo,
+      codebasePath,
     },
-    `BE Analyzer: Analyzing PR #${backend.pull_number} in ${backend.owner}/${backend.repo}`
+    `BE Analyzer: Analyzing PR #${repository.pull_number} in ${repository.owner}/${repository.repo}`
+  );
+
+  // Create GitHub tools (for PR operations)
+  const { tools: githubTools } = await getBackendTools(
+    githubMcp.beGithubToken,
+    githubMcp.mcpServerUrl
+  )
+
+
+  // Create filesystem tools (for code reading)
+  const fsTools = await getReadonlyFilesystemTools(codebasePath);
+
+  // Combine all tools
+  const allTools = { ...githubTools, ...fsTools };
+  logger.debug(
+    `BE Analyzer: Added filesystem tools for codebase at ${codebasePath}`
   );
 
   const prompt = getBeAnalyzerPrompt(input);
@@ -105,16 +113,17 @@ export async function analyzeBackendDiff(
       maxSteps: MAX_STEPS,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       maxTotalTokens: MAX_TOTAL_TOKENS,
-      toolsCount: Object.keys(tools).length,
+      toolsCount: Object.keys(allTools).length,
     },
     "BE Analyzer: Starting analysis with OpenAI"
   );
 
+  // Active tools: GitHub tools for PR operations, filesystem tools for code reading
   const result = await generateText({
     model: openaiClient("gpt-5"),
     output: outputSpec,
-    tools,
-    activeTools: ["get_file_contents", "search_code", "pull_request_read"], // Limit to read-only tools using AI SDK's activeTools
+    tools: allTools,
+    activeTools: ["pull_request_read", "readFile", "bash"] as Array<keyof typeof allTools>,
     stopWhen: stepCountIs(MAX_STEPS), // Stop when model generates text or after max steps
     maxOutputTokens: MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,

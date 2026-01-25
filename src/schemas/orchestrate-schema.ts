@@ -1,21 +1,18 @@
 import { z } from "zod/v3";
 import pino from "pino";
-import { backendRepoSchema } from "./be-analyzer-schema";
+import { backendInputSchema } from "./be-analyzer-schema";
 import { frontendRepoSchema } from "./frontend-finder-schema";
 import { backendChangeItemSchema } from "./be-analyzer-schema";
 import { frontendImpactItemSchema } from "./frontend-finder-schema";
+import { prCommentsSchema } from "./comment-generator-schema";
 
 // Input schema for orchestration - reuses schemas from agents
 export const orchestrateInputSchema = z.object({
-  backend: backendRepoSchema,
-  frontendRepos: z.array(frontendRepoSchema),
-  beGithubToken: z
-    .string()
-    .describe("GitHub token for backend repository access"),
+  backend: backendInputSchema,
   frontendGithubToken: z
     .string()
     .describe("GitHub token for frontend repository access"),
-  mcpServerUrl: z.string().describe("GitHub MCP server URL"),
+  frontendRepos: z.array(frontendRepoSchema),
   openaiApiKey: z.string().describe("OpenAI API key"),
   logLevel: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"] as [
@@ -54,15 +51,5 @@ export const backendChangeWithImpactsSchema = backendChangeItemSchema.extend({
 
 export type OrchestrateOutput = {
   changes: z.infer<typeof backendChangeWithImpactsSchema>[];
-  prComments: {
-    summary: string;
-    comments: Array<{
-      path: string;
-      startLine: number; // Start line number from diff (must be > 0)
-      endLine: number; // End line number from diff (must be > 0). For single-line comments, same as startLine
-      side: "LEFT" | "RIGHT"; // "RIGHT" as default
-      startSide: "LEFT" | "RIGHT"; // "RIGHT" as default
-      body: string;
-    }>;
-  };
+  prComments: z.infer<typeof prCommentsSchema>;
 };

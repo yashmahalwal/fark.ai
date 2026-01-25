@@ -1,4 +1,5 @@
 import { z } from "zod/v3";
+import { agentOptionsSchema } from "./common-schema";
 
 // Shared backend repository schema
 export const backendRepoSchema = z.object({
@@ -9,7 +10,23 @@ export const backendRepoSchema = z.object({
 
 // Input schema
 export const backendInputSchema = z.object({
-  backend: backendRepoSchema,
+  repository: backendRepoSchema,
+  openaiApiKey: z.string().min(1).describe("OpenAI API key"),
+  codebasePath: z
+    .string()
+    .min(1)
+    .describe("Local filesystem path to backend codebase (PR branch checked out)"),
+  githubMcp: z.object({
+    beGithubToken: z
+      .string()
+      .min(1)
+      .describe("GitHub token for backend repository access"),
+    mcpServerUrl: z
+      .string()
+      .min(1)
+      .describe("GitHub MCP server URL"),
+  }),
+  options: agentOptionsSchema.optional(),
 });
 
 // Shared backend change item schema

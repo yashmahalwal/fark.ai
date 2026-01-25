@@ -6,29 +6,34 @@ import { BackendInput } from "../agents/be-analyzer";
  * @returns The complete prompt string for the analyzer
  */
 export function getBeAnalyzerPrompt(input: BackendInput): string {
-  const { backend } = input;
-  const { owner, repo, pull_number } = backend;
+  const { repository } = input;
+  const { owner, repo, pull_number } = repository;
 
   return `Analyze PR #${pull_number} in ${owner}/${repo} to identify ALL breaking API interface changes.
 
 CONSTRAINTS:
-- Focus on API INTERFACE changes (REST routes, GraphQL schema, gRPC proto) - NOT internal files
-- Read internal changes to understand API impact, but report only at API interface level
-
-WORKFLOW:
-1. Get changed files: pull_request_read method="get_files", owner="${owner}", repo="${repo}", pullNumber=${pull_number}
-2. Get PR diff (CRITICAL): pull_request_read method="get_diff", owner="${owner}", repo="${repo}", pullNumber=${pull_number}
-3. Analyze diff for API interface files (routes, controllers, schemas, proto) - identify breaking changes
-4. Analyze diff for internal files (models, types) - trace impact to API interfaces
-5. Use get_file_contents when diff needs more context (read line ranges, not entire files)
-6. Use search_code OPTIONALLY to find where internal types are used in API endpoints (if needed and rate limits allow). Do NOT rely on it - GitHub indexing may be incomplete.
-
-EFFICIENCY: Skip unrelated files (tests, docs, build configs). Avoid reading large files/diffs - focus on relevant sections only. Don't read entire files when line ranges suffice.
+- Focus on API INTERFACE changes (REST routes, GraphQL schema, gRPC proto)
+- Do not report internal only changes.If an internal change affects API surface, report it.
 
 TOOLS:
-- pull_request_read: get_files (list changed files), get_diff (PR diff - PRIMARY tool), get (PR metadata)
-- get_file_contents: Read files in chunks when diff lacks context
-- search_code: OPTIONAL - Find API endpoints using changed internal types. WARNING: GitHub may not have indexed the code, results may be empty. Use sparingly and be aware of rate limits. Do NOT rely on this tool - use get_diff and get_file_contents as primary tools.
+- pull_request_read: get_diff, get_files, get (PR metadata) - Use ONLY for PR operations
+- bash: Use for codebase traversal/search when the PR data is insufficient to connect internal changes to API surface
+- readFile: Read specific files only when you must confirm details that cannot be derived from diff/bash
+
+WORKFLOW (ADAPTIVE - NO FIXED ORDER):
+- Use PR data and codebase tools as needed to determine API-surface impact.
+- It is OK if diff alone is sufficient; do not read files unnecessarily.
+- When internal changes exist, verify whether they impact API surface (routes/controllers/schema/proto) and report all the related impacts consolidated at the API level.
+- Use bash to trace usage only when PR data is insufficient to connect the impact.
+- Use readFile only when you are certain it is required to complete the analysis.
+
+EFFICIENCY (CRITICAL FOR TOKEN PRESERVATION):
+- The diff often contains most information you need, but not always
+- Use bash (grep, find, ls) for traversal and searching - it's lightweight
+- Minimize readFile calls - each file read consumes significant tokens
+- Skip unrelated files (tests, docs, build configs)
+- Don't read entire files when you only need specific sections
+- Don't traverse excessively - be targeted in your searches
 
 BREAKING CHANGE TYPES:
 
@@ -54,7 +59,7 @@ Note: Compiled languages (TypeScript strict, Swift, Kotlin, Rust, Go) fail on de
 
 OUTPUT:
 - Report ONLY at API interface level (file: routes.ts, schema.ts, *.proto, NOT models.ts, types.ts)
-- One entry per breaking change (id: "0", "1", "2", etc.)
+- One entry per breaking change (id: "1", "2", "3", etc.)
 - Populate structured fields from diff (oldFieldName, newFieldName, fieldName, endpointPath, enumName, enumValue, etc.)
 - Explain HOW it breaks from client perspective
 - Use internal changes to explain WHY (e.g., "Internal User.email renamed → REST /users returns 'emailAddress'")

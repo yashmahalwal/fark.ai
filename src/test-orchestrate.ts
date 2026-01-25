@@ -21,6 +21,7 @@ const envSchema = z.object({
   MCP_SERVER_URL: z.string().url(),
   BACKEND_OWNER: z.string().min(1),
   BACKEND_REPO: z.string().min(1),
+  BACKEND_CODEBASE_PATH: z.string().min(1),
   BACKEND_PR_NUMBER: z
     .string()
     .transform((val) => parseInt(val, 10))
@@ -48,30 +49,26 @@ async function main() {
 
     const result = await runFarkAnalysis({
       backend: {
-        owner: env.BACKEND_OWNER,
-        repo: env.BACKEND_REPO,
-        pull_number: env.BACKEND_PR_NUMBER,
+        repository: {
+          owner: env.BACKEND_OWNER,
+          repo: env.BACKEND_REPO,
+          pull_number: env.BACKEND_PR_NUMBER,
+        },
+        codebasePath: env.BACKEND_CODEBASE_PATH,
+        githubMcp: {
+          beGithubToken: env.BACKEND_GITHUB_TOKEN,
+          mcpServerUrl: env.MCP_SERVER_URL,
+        },
+        openaiApiKey: env.OPENAI_API_KEY,
+        options: undefined,
       },
       frontendRepos: env.FRONTEND_REPOS,
-      beGithubToken: env.BACKEND_GITHUB_TOKEN,
       frontendGithubToken: env.FRONTEND_GITHUB_TOKEN,
-      mcpServerUrl: env.MCP_SERVER_URL,
       openaiApiKey: env.OPENAI_API_KEY,
       logLevel: "debug",
       beAnalyzerOptions: undefined,
       frontendFinderOptions: undefined,
     });
-    logger.info(
-      {
-        changes: result.changes.length,
-        totalImpacts: result.changes.reduce(
-          (sum, c) => sum + c.frontendImpacts.length,
-          0
-        ),
-        prComments: result.prComments.comments.length,
-      },
-      "✅ Analysis completed successfully!"
-    );
   } catch (error) {
     if (error instanceof z.ZodError) {
       logZodError(error, logger);

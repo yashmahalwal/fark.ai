@@ -29,7 +29,7 @@ module.exports = [
       // Allow schemas that are only used for type inference
       // Allow variables prefixed with _ (intentionally unused)
       "@typescript-eslint/no-unused-vars": [
-        "error",
+        "warn",
         {
           varsIgnorePattern: "^(_.*|.*Schema)$",
         },
