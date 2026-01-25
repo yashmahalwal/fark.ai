@@ -15,7 +15,7 @@ export function getCommentGeneratorPrompt(
 Backend Changes:
 ${JSON.stringify(changes, null, 2)}
 
-Generate comments for ALL changes in the 'changes' array
+Generate comments for ALL changes in the 'changes' array.
 
 COMMENT FORMAT:
 ⚠️ **Breaking API Change**
@@ -30,7 +30,7 @@ Comment must contain proper markdown formatting for code, headings, lists and em
 
 WORKFLOW:
 1. For EACH change, iterate through ALL diffHunks:
-   - ⚠️ CRITICAL: Generate ONE comment per diffHunk (if a change has 3 diffHunks, generate 3 comments relevant to the respective diff hunk)
+   - Generate ONE comment per diffHunk (if a change has 3 diffHunks, generate 3 comments relevant to the respective diff hunk)
    - For each diffHunk in change.diffHunks:
      * path: change.file (repo-relative file path) - REQUIRED
      * startLine: diffHunk.startLine - Use the startLine from this diffHunk (line number in diff blob). For single-line comments, set both startLine and endLine to the same line number.
@@ -53,12 +53,13 @@ WORKFLOW:
 
 3. Generate summary:
    - Markdown summary of all breaking changes
-   - Include count of changes and key highlights
+   - Describe the changes and key highlights
+   - Do not include the count of comments/changes in the summary text (this instruction applies ONLY to the summary formatting - you must still generate ALL comments for ALL changes)
 
 4. Return output:
    - summary: Markdown summary text (REQUIRED)
    - comments: Array of comment objects (REQUIRED)
-   - ⚠️ Generate ONE comment per diffHunk (if change has multiple diffHunks, generate multiple comments)
+   - Generate ONE comment per diffHunk (if change has multiple diffHunks, generate multiple comments)
    - Each comment object MUST include ALL fields: path, startLine, endLine, startSide, endSide, body
    - ALL line numbers MUST be positive integers (no 0 values):
      * startLine: Actual start line number from diffHunk.startLine (REQUIRED, must be > 0)
@@ -69,7 +70,7 @@ WORKFLOW:
 OUTPUT REQUIREMENTS:
 - Generate comments for ALL changes in the 'changes' array
 - Generate ONE comment for EACH diffHunk in each change (if change has 3 diffHunks, generate 3 comments)
-- Do not include count of comments/changes in summary since all changes might not get commented due to token limits.
+- Summary text: Do not include the count of comments/changes in the summary body (this applies ONLY to summary formatting - you must still generate ALL comments for ALL changes)
 - ALL fields are REQUIRED:
   * startLine: Actual start line number from diffHunk.startLine (MUST be > 0, no file-level comments)
   * endLine: Actual end line number from diffHunk.endLine (MUST be > 0, no file-level comments). For single-line comments, same as startLine.
