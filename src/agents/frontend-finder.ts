@@ -100,10 +100,10 @@ export async function findFrontendImpacts(
   });
 
   // Get limits from options with fallback defaults
-  const MAX_STEPS = options?.maxSteps || 30;
+  const MAX_STEPS = options?.maxSteps || 40; // Increased to allow trying multiple standard paths
   const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2); // Force output generation 2 steps before limit
   const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 50000;
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 400000; // Increased default for frontend finder
+  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 500000; // Increased default for frontend finder (safety margin for deep projects)
   const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85; // Force output at 85% of token limit
 
   // Track total token usage across all steps

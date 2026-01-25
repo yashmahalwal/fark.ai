@@ -98,7 +98,7 @@ Logic:
 - Pure addition (only "+" lines): startSide = "RIGHT", endSide = "RIGHT"
 - Pure removal (only "-" lines): startSide = "LEFT", endSide = "LEFT"
 - Mixed (both "-" and "+" lines): startLine = first removed line (LEFT), endLine = last added line (RIGHT), startSide = "LEFT", endSide = "RIGHT"
-- ⚠️ CRITICAL: Stick to diff lines (lines with "+" or "-" prefix) - startLine/endLine should be the exact changed lines, not context lines
+- ⚠️ CRITICAL: Stick to diff lines (lines with "+" or "-" prefix) - startLine/endLine should be the exact changed lines
 
 If no breaking changes found, return empty backendChanges array.`;
 }

@@ -125,10 +125,10 @@ export async function postPRComments(
 
   // Get limits from options with fallback defaults
   // Each comment addition is a step, so we need enough steps for: PR read, review check, create review, add comments (one per comment), submit review
-  const MAX_STEPS = options?.maxSteps || 50; // Allow for many comments (e.g., 40 comments + 10 overhead steps)
+  const MAX_STEPS = options?.maxSteps || 60; // Allow for many comments (e.g., 30 comments + overhead steps)
   const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2);
   const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 5000; // Small output
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 50000; // Lower limit for simple operation
+  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 300000; // Increased to handle up to 30 comments with full conversation history
   const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85;
 
   // Track total token usage across all steps
