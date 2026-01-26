@@ -1,7 +1,12 @@
 import { generateText, Output, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
-import pino from "pino";
 import { getCommentGeneratorPrompt } from "../utils/get-comment-generator-prompt";
+import { createLogger, type LogLevel } from "../utils/create-logger";
+import {
+  calculateLimits,
+  enforceLimits,
+  trackTokenUsage,
+} from "../utils/limit-checks";
 import {
   commentGeneratorInputSchema,
   prCommentsSchema,
@@ -24,13 +29,14 @@ export async function generatePRComments(
   input: CommentGeneratorInput,
   tools: Record<string, any>,
   openaiApiKey: string,
-  logger: pino.Logger = pino(),
+  logLevel: LogLevel = "info",
   options?: {
     maxSteps?: number;
     maxOutputTokens?: number;
     maxTotalTokens?: number;
   }
 ): Promise<PRCommentsOutput> {
+  const logger = createLogger(logLevel, "Comment Generator");
   // Validate inputs using Zod
   const validatedInput = commentGeneratorInputSchema.parse(input);
 
@@ -54,15 +60,14 @@ export async function generatePRComments(
   );
 
   logger.info(
-    { pull_number, owner: backend_owner, repo: backend_repo },
-    `Comment Generator: Generating comments for PR #${pull_number} in ${backend_owner}/${backend_repo}`
-  );
-  logger.debug(
     {
+      pull_number,
+      owner: backend_owner,
+      repo: backend_repo,
       changeCount: changes.length,
       totalImpacts,
     },
-    `Comment Generator: ${changes.length} backend changes with ${totalImpacts} total frontend impacts`
+    `Generating comments for PR #${pull_number} in ${backend_owner}/${backend_repo}`
   );
 
   const prompt = getCommentGeneratorPrompt(validatedInput);
@@ -73,153 +78,54 @@ export async function generatePRComments(
     schema: prCommentsSchema,
   });
 
-  // Get limits from options with fallback defaults
-  const MAX_STEPS = options?.maxSteps || 15; // Comment generation is simpler, fewer steps needed
-  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2); // Force output generation 2 steps before limit
-  const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 30000; // Lower than other agents since comments are shorter
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 100000; // Lower limit for comment generation
-  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85; // Force output at 85% of token limit
-
-  // Track total token usage across all steps
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
+  // Calculate limits from options with defaults
+  const limits = calculateLimits({
+    maxSteps: options?.maxSteps || 15, // Comment generation is simpler, fewer steps needed
+    maxOutputTokens: options?.maxOutputTokens || 30000, // Lower than other agents since comments are shorter
+    maxTotalTokens: options?.maxTotalTokens || 100000, // Lower limit for comment generation
+  });
 
   logger.info(
     {
-      maxSteps: MAX_STEPS,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      maxTotalTokens: MAX_TOTAL_TOKENS,
+      maxSteps: limits.MAX_STEPS,
+      maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
+      maxTotalTokens: limits.MAX_TOTAL_TOKENS,
+      model: "gpt-4o",
     },
-    "Comment Generator: Starting analysis with OpenAI"
+    "Starting analysis with OpenAI"
   );
 
   const result = await generateText({
     model: openaiClient("gpt-4o"),
     output: outputSpec,
-    stopWhen: stepCountIs(MAX_STEPS),
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
+    stopWhen: stepCountIs(limits.MAX_STEPS),
+    maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
     prompt,
     prepareStep: async ({ stepNumber, steps, messages }) => {
-      // Track token usage across steps
-      const stepUsage = steps.reduce(
-        (acc, step) => {
-          if (step.usage) {
-            return {
-              inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
-              outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
-            };
-          }
-          return acc;
+      return enforceLimits({
+        stepNumber,
+        steps,
+        messages,
+        config: {
+          limits,
+          onTokenWarning: (params) => {
+            logger.warn(params, "Approaching total token limit");
+          },
+          onTokenForce: (params) => {
+            logger.warn(params, "Approaching token limit, forcing output generation");
+          },
+          onStepForce: (params) => {
+            logger.warn(params, "Approaching step limit, forcing output generation");
+          },
+          onTokenLimitExceeded: (params) => {
+            logger.error(params, "Total token limit exceeded, aborting");
+          },
+          tokenForceMessage: () =>
+            "CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all comments found so far.",
+          stepForceMessage: () =>
+            "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
         },
-        { inputTokens: 0, outputTokens: 0 }
-      );
-      totalInputTokens = stepUsage.inputTokens;
-      totalOutputTokens = stepUsage.outputTokens;
-      const currentTotalTokens = totalInputTokens + totalOutputTokens;
-
-      // Warn if approaching token limits
-      if (currentTotalTokens > MAX_TOTAL_TOKENS * 0.8) {
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-          },
-          "Comment Generator: Approaching total token limit"
-        );
-      }
-
-      // Force output generation when approaching token limit (85%)
-      if (currentTotalTokens >= FORCE_OUTPUT_AT_TOKENS) {
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-          },
-          "Comment Generator: Approaching token limit, forcing output generation"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        if (!hasOutput) {
-          // Force text generation by preventing tool calls
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all comments found so far.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Abort if token limit exceeded
-      if (currentTotalTokens >= MAX_TOTAL_TOKENS) {
-        logger.error(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-          },
-          "Comment Generator: Total token limit exceeded, aborting"
-        );
-        throw new Error(
-          `Token limit exceeded: ${currentTotalTokens} tokens used (limit: ${MAX_TOTAL_TOKENS})`
-        );
-      }
-
-      // When approaching step limit, force the model to generate output instead of calling tools
-      if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
-        logger.warn(
-          {
-            stepNumber,
-            maxSteps: MAX_STEPS,
-            stepsCompleted: steps.length,
-          },
-          "Comment Generator: Approaching step limit, forcing output generation"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        if (!hasOutput) {
-          // Force text generation by preventing tool calls
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Default: continue with normal execution
-      return {};
+      });
     },
     onStepFinish: ({ toolCalls, usage }) => {
       // Log tool calls with details
@@ -234,14 +140,15 @@ export async function generatePRComments(
                 tool: tc.toolName,
                 input: tc.input,
               },
-              "Comment Generator: Posting comment to PR"
+              "Posting comment to PR"
             );
           } else {
             logger.debug(
               {
                 tool: tc.toolName,
+                input: tc.input,
               },
-              "Comment Generator: Tool call"
+              `Tool call - ${tc.toolName}`
             );
           }
         });
@@ -255,7 +162,7 @@ export async function generatePRComments(
             outputTokens: usage.outputTokens,
             stepTotal: (usage.inputTokens || 0) + (usage.outputTokens || 0),
           },
-          "Comment Generator: Token usage"
+          "Token usage"
         );
       }
     },
@@ -267,23 +174,16 @@ export async function generatePRComments(
         totalSteps: result.steps?.length || 0,
         finishReason: result.finishReason || undefined,
       },
-      "Comment Generator: Failed to generate structured output from the model"
+      "Failed to generate structured output from the model"
     );
     throw new Error("Failed to generate structured output from the model");
   }
 
   // Calculate final token usage
-  const finalUsage = result.steps?.reduce(
-    (acc, step) => {
-      if (step.usage) {
-        acc.inputTokens += step.usage.inputTokens || 0;
-        acc.outputTokens += step.usage.outputTokens || 0;
-      }
-      return acc;
-    },
-    { inputTokens: 0, outputTokens: 0 }
-  ) || { inputTokens: 0, outputTokens: 0 };
-  const finalTotalTokens = finalUsage.inputTokens + finalUsage.outputTokens;
+  const finalUsage = result.steps
+    ? trackTokenUsage(result.steps)
+    : { totalInputTokens: 0, totalOutputTokens: 0, currentTotalTokens: 0 };
+  const finalTotalTokens = finalUsage.currentTotalTokens;
 
   logger.info(
     {
@@ -291,12 +191,12 @@ export async function generatePRComments(
       totalSteps: result.steps?.length || 0,
       finishReason: result.finishReason || undefined,
       tokenUsage: {
-        inputTokens: finalUsage.inputTokens,
-        outputTokens: finalUsage.outputTokens,
+        inputTokens: finalUsage.totalInputTokens,
+        outputTokens: finalUsage.totalOutputTokens,
         totalTokens: finalTotalTokens,
       },
     },
-    `Comment Generator: Generation complete, created ${result.output.comments.length} comments`
+    `Generation complete, created ${result.output.comments.length} comments`
   );
 
   // Log summary at info level (important output)
@@ -305,14 +205,13 @@ export async function generatePRComments(
       summary: result.output.summary.substring(0, 200) + (result.output.summary.length > 200 ? "..." : ""),
       summaryLength: result.output.summary.length,
     },
-    "Comment Generator: Generated summary"
+    "Generated summary"
   );
 
   // Log each comment once with full details
   if (result.output.comments.length > 0) {
-    logger.info("Comment Generator: Generated comments details:");
     result.output.comments.forEach((comment, index) => {
-      logger.info(
+      logger.debug(
         {
           index: index + 1,
           path: comment.path,
@@ -323,12 +222,12 @@ export async function generatePRComments(
           bodyLength: comment.body.length,
           bodyPreview: comment.body.substring(0, 200) + (comment.body.length > 200 ? "..." : ""),
         },
-        `Comment Generator: Comment ${index + 1} - ${comment.path}:${comment.startLine}${comment.endLine !== comment.startLine ? `-${comment.endLine}` : ""}`
+        `Comment ${index + 1} - ${comment.path}:${comment.startLine}${comment.endLine !== comment.startLine ? `-${comment.endLine}` : ""}`
       );
-      logger.debug({ body: comment.body }, "Comment Generator: Full comment body");
+      logger.debug({ body: comment.body }, "Full comment body");
     });
   } else {
-    logger.warn("Comment Generator: No comments generated - comments array is empty");
+    logger.warn("No comments generated - comments array is empty");
   }
 
   return result.output as PRCommentsOutput;

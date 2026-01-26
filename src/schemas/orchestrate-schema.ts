@@ -5,6 +5,7 @@ import { frontendFinderInputSchema } from "./frontend-finder-schema";
 import { backendChangeItemSchema } from "./be-analyzer-schema";
 import { frontendImpactItemSchema } from "./frontend-finder-schema";
 import { prCommentsSchema } from "./comment-generator-schema";
+import { agentOptionsSchema } from "./common-schema";
 
 // Frontend configuration schema - reuses frontendFinderInputSchema, excluding backendChanges and openaiApiKey
 export const frontendConfigSchema = frontendFinderInputSchema.pick({
@@ -28,6 +29,8 @@ export const orchestrateInputSchema = z.object({
     .optional()
     .default("info")
     .describe("Log level (defaults to 'info')"),
+  commentGeneratorOptions: agentOptionsSchema.optional(),
+  prCommentPosterOptions: agentOptionsSchema.optional(),
 });
 
 export type OrchestrateInput = z.infer<typeof orchestrateInputSchema>;

@@ -1,8 +1,8 @@
 import { generateText, stepCountIs, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
-import pino from "pino";
 import { getFrontendFinderPrompt } from "../utils/get-frontend-finder-prompt";
+import { createLogger, type LogLevel } from "../utils/create-logger";
 import {
   frontendFinderInputSchema,
   frontendImpactsSchema,
@@ -10,6 +10,11 @@ import {
   type FrontendImpactsOutput,
 } from "../schemas/frontend-finder-schema";
 import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
+import {
+  calculateLimits,
+  enforceLimits,
+  trackTokenUsage,
+} from "../utils/limit-checks";
 
 // Re-export schemas for backward compatibility
 export {
@@ -28,8 +33,9 @@ export {
 export async function findFrontendImpacts(
   input: FrontendFinderInput,
   openaiApiKey: string,
-  logger: pino.Logger = pino()
+  logLevel: LogLevel = "info"
 ): Promise<FrontendImpactsOutput> {
+  const logger = createLogger(logLevel, "Frontend Finder");
   // Validate inputs using Zod
   let validatedInput: FrontendFinderInput;
   try {
@@ -44,8 +50,9 @@ export async function findFrontendImpacts(
         {
           validationErrors: error.issues,
           errorMessages,
+          input,
         },
-        "Frontend Finder: Input validation failed"
+        "Input validation failed"
       );
     }
     throw error;
@@ -71,13 +78,17 @@ export async function findFrontendImpacts(
       codebasePath,
       changeCount: backendChanges.backendChanges.length,
     },
-    `Frontend Finder: Analyzing ${repository.owner}/${repository.repo} (branch: ${repository.branch}) for ${backendChanges.backendChanges.length} backend changes`
+    `Analyzing ${repository.owner}/${repository.repo} (branch: ${repository.branch}) for ${backendChanges.backendChanges.length} backend changes`
   );
 
   // Create filesystem tools for codebase
   const tools = await getReadonlyFilesystemTools(codebasePath);
   logger.debug(
-    `Frontend Finder: Added filesystem tools for codebase at ${codebasePath}`
+    {
+      codebasePath,
+      toolsCount: Object.keys(tools).length,
+    },
+    "Added filesystem tools for codebase"
   );
 
   const prompt = getFrontendFinderPrompt(input);
@@ -88,24 +99,21 @@ export async function findFrontendImpacts(
     schema: frontendImpactsSchema,
   });
 
-  // Get limits from options with fallback defaults
-  const MAX_STEPS = options?.maxSteps || 40;
-  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2);
-  const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 50000;
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 500000;
-  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85;
-
-  // Track total token usage across all steps
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
+  // Calculate limits from options with defaults
+  const limits = calculateLimits({
+    maxSteps: options?.maxSteps || 40,
+    maxOutputTokens: options?.maxOutputTokens || 50000,
+    maxTotalTokens: options?.maxTotalTokens || 500000,
+  });
 
   logger.info(
     {
-      maxSteps: MAX_STEPS,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      maxTotalTokens: MAX_TOTAL_TOKENS,
+      maxSteps: limits.MAX_STEPS,
+      maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
+      maxTotalTokens: limits.MAX_TOTAL_TOKENS,
+      model: "gpt-5",
     },
-    "Frontend Finder: Starting analysis with OpenAI"
+    "Starting analysis with OpenAI"
   );
 
   const result = await generateText({
@@ -113,151 +121,34 @@ export async function findFrontendImpacts(
     output: outputSpec,
     tools,
     activeTools: ["readFile", "bash"],
-    stopWhen: stepCountIs(MAX_STEPS), // Stop when model generates text or after max steps
-    maxOutputTokens: MAX_OUTPUT_TOKENS, // Limit output tokens
+    stopWhen: stepCountIs(limits.MAX_STEPS), // Stop when model generates text or after max steps
+    maxOutputTokens: limits.MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,
     prepareStep: async ({ stepNumber, steps, messages }) => {
-      // Track token usage across steps
-      const stepUsage = steps.reduce(
-        (acc, step) => {
-          if (step.usage) {
-            return {
-              inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
-              outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
-            };
-          }
-          return acc;
+      return enforceLimits({
+        stepNumber,
+        steps,
+        messages,
+        config: {
+          limits,
+          onTokenWarning: (params) => {
+            logger.warn(params, "Approaching total token limit");
+          },
+          onTokenForce: (params) => {
+            logger.warn(params, "Approaching token limit, forcing output generation");
+          },
+          onStepForce: (params) => {
+            logger.warn(params, "Approaching step limit, forcing output generation");
+          },
+          onTokenLimitExceeded: (params) => {
+            logger.error(params, "Total token limit exceeded, aborting");
+          },
+          tokenForceMessage: () =>
+            "CRITICAL: You are approaching the token limit (85%). You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
+          stepForceMessage: () =>
+            "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
         },
-        { inputTokens: 0, outputTokens: 0 }
-      );
-      totalInputTokens = stepUsage.inputTokens;
-      totalOutputTokens = stepUsage.outputTokens;
-      const currentTotalTokens = totalInputTokens + totalOutputTokens;
-
-      // Warn if approaching token limits
-      if (currentTotalTokens > MAX_TOTAL_TOKENS * 0.8) {
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-          },
-          "Frontend Finder: Approaching total token limit"
-        );
-      }
-
-      // Force output generation when approaching token limit (85%)
-      // Only force if we've done substantial searching (at least 10 tool calls)
-      if (currentTotalTokens >= FORCE_OUTPUT_AT_TOKENS) {
-        const toolCallsCount = steps.reduce(
-          (count, step) => count + (step.toolCalls?.length || 0),
-          0
-        );
-        const hasDoneSubstantialSearching = toolCallsCount >= 10; // At least 10 tool calls means we've done substantial searching
-
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-            toolCallsCount,
-            hasDoneSubstantialSearching,
-          },
-          "Frontend Finder: Approaching token limit, checking if we should force output"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        // Only force output if we've done substantial searching OR we already have output
-        if (!hasOutput && hasDoneSubstantialSearching) {
-          // Force text generation by preventing tool calls
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "CRITICAL: You are approaching the token limit (85%). You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Abort if token limit exceeded
-      if (currentTotalTokens >= MAX_TOTAL_TOKENS) {
-        logger.error(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-          },
-          "Frontend Finder: Total token limit exceeded, aborting"
-        );
-        throw new Error(
-          `Token limit exceeded: ${currentTotalTokens} tokens used (limit: ${MAX_TOTAL_TOKENS})`
-        );
-      }
-
-      // When approaching step limit, force the model to generate output instead of calling tools
-      // Only force if we've done substantial searching (at least 10 tool calls)
-      if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
-        const toolCallsCount = steps.reduce(
-          (count, step) => count + (step.toolCalls?.length || 0),
-          0
-        );
-        const hasDoneSubstantialSearching = toolCallsCount >= 10; // At least 10 tool calls means we've done substantial searching
-
-        logger.warn(
-          {
-            stepNumber,
-            maxSteps: MAX_STEPS,
-            totalToolCalls: toolCallsCount,
-            stepsCompleted: steps.length,
-            hasDoneSubstantialSearching,
-          },
-          "Frontend Finder: Approaching step limit, checking if we should force output"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        // Only force output if we've done substantial searching OR we already have output
-        if (!hasOutput && hasDoneSubstantialSearching) {
-          // Force text generation by preventing tool calls
-          // Also add a reminder message to generate output
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Default: continue with normal execution
-      return {};
+      });
     },
     onStepFinish: ({ text, toolCalls, finishReason, usage }) => {
       // Log tool calls
@@ -268,7 +159,7 @@ export async function findFrontendImpacts(
               tool: tc.toolName,
               input: tc.input,
             },
-            `Frontend Finder: Tool call - ${tc.toolName}`
+            `Tool call - ${tc.toolName}`
           );
         });
       }
@@ -280,7 +171,7 @@ export async function findFrontendImpacts(
             textLength: text.length,
             finishReason: finishReason || undefined,
           },
-          "Frontend Finder: Model generated text output"
+          "Model generated text output"
         );
       }
 
@@ -293,7 +184,7 @@ export async function findFrontendImpacts(
             outputTokens: usage.outputTokens,
             stepTotal,
           },
-          "Frontend Finder: Token usage"
+          "Token usage"
         );
       }
     },
@@ -306,25 +197,16 @@ export async function findFrontendImpacts(
         totalSteps: result.steps?.length || 0,
         finishReason: result.finishReason || undefined,
       },
-      "Frontend Finder: Failed to generate structured output from the model"
+      "Failed to generate structured output from the model"
     );
     throw new Error("Failed to generate structured output from the model");
   }
 
   // Calculate final token usage
-  const finalUsage = result.steps?.reduce(
-    (acc, step) => {
-      if (step.usage) {
-        return {
-          inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
-          outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
-        };
-      }
-      return acc;
-    },
-    { inputTokens: 0, outputTokens: 0 }
-  ) || { inputTokens: 0, outputTokens: 0 };
-  const finalTotalTokens = finalUsage.inputTokens + finalUsage.outputTokens;
+  const finalUsage = result.steps
+    ? trackTokenUsage(result.steps)
+    : { totalInputTokens: 0, totalOutputTokens: 0, currentTotalTokens: 0 };
+  const finalTotalTokens = finalUsage.currentTotalTokens;
 
   const impactCount = result.output.frontendImpacts.length;
   logger.info(
@@ -333,23 +215,22 @@ export async function findFrontendImpacts(
       totalSteps: result.steps?.length || 0,
       finishReason: result.finishReason || undefined,
       tokenUsage: {
-        inputTokens: finalUsage.inputTokens,
-        outputTokens: finalUsage.outputTokens,
+        inputTokens: finalUsage.totalInputTokens,
+        outputTokens: finalUsage.totalOutputTokens,
         totalTokens: finalTotalTokens,
       },
     },
-    `Frontend Finder: Analysis complete - found ${impactCount} impact${impactCount !== 1 ? "s" : ""}`
+    `Analysis complete - found ${impactCount} impact${impactCount !== 1 ? "s" : ""}`
   );
 
   // Log each impact once with full details
   if (impactCount > 0) {
-    logger.info("Frontend Finder: Detected impacts details:");
     result.output.frontendImpacts.forEach(
       (
         impact: FrontendImpactsOutput["frontendImpacts"][number],
         index: number
       ) => {
-        logger.info(
+        logger.debug(
           {
             index: index + 1,
             backendChangeId: impact.backendChangeId,
@@ -359,7 +240,7 @@ export async function findFrontendImpacts(
             description: impact.description,
             severity: impact.severity,
           },
-          `Frontend Finder: Impact ${index + 1} - ${impact.severity} severity in ${impact.frontendRepo}`
+          `Impact ${index + 1} - ${impact.severity} severity in ${impact.frontendRepo}`
         );
       }
     );

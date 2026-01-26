@@ -10,14 +10,21 @@
 import "dotenv/config";
 import { runFarkAnalysis } from "./workflow/orchestrate";
 import { frontendRepoSchema } from "./schemas/frontend-finder-schema";
-import pino from "pino";
 import { z } from "zod/v3";
 import { logZodError } from "./utils/log-zod-error";
+import { createLogger } from "./utils/create-logger";
 
 // Schema for frontend config from env (without openaiApiKey)
 const frontendConfigFromEnvSchema = z.object({
   repository: frontendRepoSchema,
   codebasePath: z.string().min(1),
+  options: z
+    .object({
+      maxSteps: z.number().int().positive().optional(),
+      maxOutputTokens: z.number().int().positive().optional(),
+      maxTotalTokens: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 const envSchema = z.object({
@@ -44,22 +51,133 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .optional(),
+  // BE Analyzer limits
+  BE_ANALYZER_MAX_STEPS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  BE_ANALYZER_MAX_OUTPUT_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  BE_ANALYZER_MAX_TOTAL_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  // Frontend Finder limits (applied to all frontends)
+  FRONTEND_FINDER_MAX_STEPS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  FRONTEND_FINDER_MAX_OUTPUT_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  FRONTEND_FINDER_MAX_TOTAL_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  // Comment Generator limits
+  COMMENT_GENERATOR_MAX_STEPS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  COMMENT_GENERATOR_MAX_OUTPUT_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  COMMENT_GENERATOR_MAX_TOTAL_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  // PR Comment Poster limits
+  PR_COMMENT_POSTER_MAX_STEPS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
+  PR_COMMENT_POSTER_MAX_TOTAL_TOKENS: z
+    .string()
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().positive())
+    .optional(),
 });
 
 async function main() {
-  const logger = pino({
-    transport: {
-      target: "pino-pretty",
-      options: {
-        colorize: true,
-        translateTime: "HH:MM:ss Z",
-        ignore: "pid,hostname",
-      },
-    },
-  });
+  const logger = createLogger("info", "Test Orchestrate");
 
   try {
     const env = envSchema.parse(process.env);
+
+    // Build backend options from env
+    const backendOptions =
+      env.BE_ANALYZER_MAX_STEPS ||
+      env.BE_ANALYZER_MAX_OUTPUT_TOKENS ||
+      env.BE_ANALYZER_MAX_TOTAL_TOKENS
+        ? {
+            maxSteps: env.BE_ANALYZER_MAX_STEPS,
+            maxOutputTokens: env.BE_ANALYZER_MAX_OUTPUT_TOKENS,
+            maxTotalTokens: env.BE_ANALYZER_MAX_TOTAL_TOKENS,
+          }
+        : undefined;
+
+    // Build frontend options from env (apply to all frontends)
+    const frontendOptions =
+      env.FRONTEND_FINDER_MAX_STEPS ||
+      env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS ||
+      env.FRONTEND_FINDER_MAX_TOTAL_TOKENS
+        ? {
+            maxSteps: env.FRONTEND_FINDER_MAX_STEPS,
+            maxOutputTokens: env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS,
+            maxTotalTokens: env.FRONTEND_FINDER_MAX_TOTAL_TOKENS,
+          }
+        : undefined;
+
+    // Apply frontend options to all frontends if provided
+    const frontendsWithOptions = frontendOptions
+      ? env.FRONTENDS.map((frontend) => ({
+          ...frontend,
+          options: frontend.options || frontendOptions,
+        }))
+      : env.FRONTENDS;
+
+    // Build comment generator options from env
+    const commentGeneratorOptions =
+      env.COMMENT_GENERATOR_MAX_STEPS ||
+      env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS ||
+      env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS
+        ? {
+            maxSteps: env.COMMENT_GENERATOR_MAX_STEPS,
+            maxOutputTokens: env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS,
+            maxTotalTokens: env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS,
+          }
+        : undefined;
+
+    // Build PR comment poster options from env
+    const prCommentPosterOptions =
+      env.PR_COMMENT_POSTER_MAX_STEPS ||
+      env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS ||
+      env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS
+        ? {
+            maxSteps: env.PR_COMMENT_POSTER_MAX_STEPS,
+            maxOutputTokens: env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS,
+            maxTotalTokens: env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS,
+          }
+        : undefined;
 
     await runFarkAnalysis({
       backend: {
@@ -73,11 +191,13 @@ async function main() {
           beGithubToken: env.BACKEND_GITHUB_TOKEN,
           mcpServerUrl: env.MCP_SERVER_URL,
         },
-        options: undefined,
+        options: backendOptions,
       },
-      frontends: env.FRONTENDS,
+      frontends: frontendsWithOptions,
       openaiApiKey: env.OPENAI_API_KEY,
       logLevel: env.LOG_LEVEL || "info",
+      commentGeneratorOptions,
+      prCommentPosterOptions,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

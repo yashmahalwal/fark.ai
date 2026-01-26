@@ -1,8 +1,8 @@
 import { generateText, stepCountIs, Output } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod/v3";
-import pino from "pino";
 import { getBeAnalyzerPrompt } from "../utils/get-be-analyzer-prompt";
+import { createLogger, type LogLevel } from "../utils/create-logger";
 import {
   backendInputSchema,
   backendChangesSchema,
@@ -11,6 +11,11 @@ import {
 } from "../schemas/be-analyzer-schema";
 import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
 import { getBackendTools } from "../tools/github-tools";
+import {
+  calculateLimits,
+  enforceLimits,
+  trackTokenUsage,
+} from "../utils/limit-checks";
 
 // Re-export schemas for backward compatibility
 export {
@@ -30,8 +35,9 @@ export {
 export async function analyzeBackendDiff(
   input: BackendInput,
   openaiApiKey: string,
-  logger: pino.Logger = pino()
+  logLevel: LogLevel = "info"
 ): Promise<BackendChangesOutput> {
+  const logger = createLogger(logLevel, "BE Analyzer");
   // Validate inputs using Zod
   let validatedInput: BackendInput;
   try {
@@ -46,8 +52,9 @@ export async function analyzeBackendDiff(
         {
           validationErrors: error.issues,
           errorMessages,
+          input,
         },
-        "BE Analyzer: Input validation failed"
+        "Input validation failed"
       );
     }
     throw error;
@@ -71,7 +78,7 @@ export async function analyzeBackendDiff(
       repo: repository.repo,
       codebasePath,
     },
-    `BE Analyzer: Analyzing PR #${repository.pull_number} in ${repository.owner}/${repository.repo}`
+    `Analyzing PR #${repository.pull_number} in ${repository.owner}/${repository.repo}`
   );
 
   // Create GitHub tools (for PR operations)
@@ -87,7 +94,11 @@ export async function analyzeBackendDiff(
   // Combine all tools
   const allTools = { ...githubTools, ...fsTools };
   logger.debug(
-    `BE Analyzer: Added filesystem tools for codebase at ${codebasePath}`
+    {
+      codebasePath,
+      toolsCount: Object.keys(allTools).length,
+    },
+    "Added filesystem tools for codebase"
   );
 
   const prompt = getBeAnalyzerPrompt(input);
@@ -98,25 +109,22 @@ export async function analyzeBackendDiff(
     schema: backendChangesSchema,
   });
 
-  // Get limits from options with fallback defaults
-  const MAX_STEPS = options?.maxSteps || 20;
-  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2); // Force output generation 2 steps before limit
-  const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 50000;
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 200000;
-  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85; // Force output at 85% of token limit
-
-  // Track total token usage across all steps
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
+  // Calculate limits from options with defaults
+  const limits = calculateLimits({
+    maxSteps: options?.maxSteps || 20,
+    maxOutputTokens: options?.maxOutputTokens || 50000,
+    maxTotalTokens: options?.maxTotalTokens || 200000,
+  });
 
   logger.info(
     {
-      maxSteps: MAX_STEPS,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      maxTotalTokens: MAX_TOTAL_TOKENS,
+      maxSteps: limits.MAX_STEPS,
+      maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
+      maxTotalTokens: limits.MAX_TOTAL_TOKENS,
       toolsCount: Object.keys(allTools).length,
+      model: "gpt-5",
     },
-    "BE Analyzer: Starting analysis with OpenAI"
+    "Starting analysis with OpenAI"
   );
 
   // Active tools: GitHub tools for PR operations, filesystem tools for code reading
@@ -125,136 +133,34 @@ export async function analyzeBackendDiff(
     output: outputSpec,
     tools: allTools,
     activeTools: ["pull_request_read", "readFile", "bash"] as Array<keyof typeof allTools>,
-    stopWhen: stepCountIs(MAX_STEPS), // Stop when model generates text or after max steps
-    maxOutputTokens: MAX_OUTPUT_TOKENS, // Limit output tokens
+    stopWhen: stepCountIs(limits.MAX_STEPS), // Stop when model generates text or after max steps
+    maxOutputTokens: limits.MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,
     prepareStep: async ({ stepNumber, steps, messages }) => {
-      // Track token usage across steps
-      const stepUsage = steps.reduce(
-        (acc, step) => {
-          if (step.usage) {
-            return {
-              inputTokens: acc.inputTokens + (step.usage.inputTokens || 0),
-              outputTokens: acc.outputTokens + (step.usage.outputTokens || 0),
-            };
-          }
-          return acc;
+      return enforceLimits({
+        stepNumber,
+        steps,
+        messages,
+        config: {
+          limits,
+          onTokenWarning: (params) => {
+            logger.warn(params, "Approaching total token limit");
+          },
+          onTokenForce: (params) => {
+            logger.warn(params, "Approaching token limit, forcing output generation");
+          },
+          onStepForce: (params) => {
+            logger.warn(params, "Approaching step limit, forcing output generation");
+          },
+          onTokenLimitExceeded: (params) => {
+            logger.error(params, "Total token limit exceeded, aborting");
+          },
+          tokenForceMessage: () =>
+            `CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all breaking changes found so far.`,
+          stepForceMessage: () =>
+            "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
         },
-        { inputTokens: 0, outputTokens: 0 }
-      );
-      totalInputTokens = stepUsage.inputTokens;
-      totalOutputTokens = stepUsage.outputTokens;
-      const currentTotalTokens = totalInputTokens + totalOutputTokens;
-
-      // Warn if approaching token limits
-      if (currentTotalTokens > MAX_TOTAL_TOKENS * 0.8) {
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-          },
-          "BE Analyzer: Approaching total token limit"
-        );
-      }
-
-      // Force output generation when approaching token limit (85%)
-      if (currentTotalTokens >= FORCE_OUTPUT_AT_TOKENS) {
-        logger.warn(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            percentage: Math.round(
-              (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-            ),
-          },
-          "BE Analyzer: Approaching token limit, forcing output generation"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        if (!hasOutput) {
-          // Force text generation by preventing tool calls
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all breaking changes found so far.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Abort if token limit exceeded
-      if (currentTotalTokens >= MAX_TOTAL_TOKENS) {
-        logger.error(
-          {
-            stepNumber,
-            currentTotalTokens,
-            maxTotalTokens: MAX_TOTAL_TOKENS,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-          },
-          "BE Analyzer: Total token limit exceeded, aborting"
-        );
-        throw new Error(
-          `Token limit exceeded: ${currentTotalTokens} tokens used (limit: ${MAX_TOTAL_TOKENS})`
-        );
-      }
-
-      // When approaching step limit, force the model to generate output instead of calling tools
-      if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
-        const toolCallsCount = steps.reduce(
-          (count, step) => count + (step.toolCalls?.length || 0),
-          0
-        );
-        logger.warn(
-          {
-            stepNumber,
-            maxSteps: MAX_STEPS,
-            totalToolCalls: toolCallsCount,
-            stepsCompleted: steps.length,
-          },
-          "BE Analyzer: Approaching step limit, forcing output generation"
-        );
-
-        // Check if we already have output from previous steps
-        const hasOutput = steps.some(
-          (step) => step.text && step.text.trim().length > 0
-        );
-
-        if (!hasOutput) {
-          // Force text generation by preventing tool calls
-          // Also add a reminder message to generate output
-          const reminderMessage = {
-            role: "user" as const,
-            content:
-              "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
-          };
-
-          return {
-            toolChoice: "none", // Prevent tool calls, force text generation
-            messages: [...messages, reminderMessage],
-          };
-        }
-      }
-
-      // Default: continue with normal execution
-      return {};
+      });
     },
     onStepFinish: ({ text, toolCalls, finishReason, usage }) => {
       // Log tool calls with action context (simplified - no full input object)
@@ -266,7 +172,7 @@ export async function analyzeBackendDiff(
               tool: tc.toolName,
               input: tc.input,
             },
-            `BE Analyzer: Tool call - ${tc.toolName}`
+            `Tool call - ${tc.toolName}`
           );
         });
       }
@@ -278,7 +184,7 @@ export async function analyzeBackendDiff(
             textLength: text.length,
             finishReason: finishReason || undefined,
           },
-          "BE Analyzer: Model generated text output"
+          "Model generated text output"
         );
       }
 
@@ -291,7 +197,7 @@ export async function analyzeBackendDiff(
             outputTokens: usage.outputTokens,
             stepTotal,
           },
-          "BE Analyzer: Token usage"
+          "Token usage"
         );
       }
     },
@@ -304,7 +210,7 @@ export async function analyzeBackendDiff(
         totalSteps: result.steps?.length || 0,
         finishReason: result.finishReason || undefined,
       },
-      "BE Analyzer: Failed to generate structured output from the model"
+      "Failed to generate structured output from the model"
     );
     throw new Error("Failed to generate structured output from the model");
   }
@@ -327,17 +233,10 @@ export async function analyzeBackendDiff(
   ).size;
 
   // Calculate final token usage
-  const finalUsage = result.steps?.reduce(
-    (acc, step) => {
-      if (step.usage) {
-        acc.inputTokens += step.usage.inputTokens || 0;
-        acc.outputTokens += step.usage.outputTokens || 0;
-      }
-      return acc;
-    },
-    { inputTokens: 0, outputTokens: 0 }
-  ) || { inputTokens: 0, outputTokens: 0 };
-  const finalTotalTokens = finalUsage.inputTokens + finalUsage.outputTokens;
+  const finalUsage = result.steps
+    ? trackTokenUsage(result.steps)
+    : { totalInputTokens: 0, totalOutputTokens: 0, currentTotalTokens: 0 };
+  const finalTotalTokens = finalUsage.currentTotalTokens;
 
   logger.info(
     {
@@ -347,19 +246,18 @@ export async function analyzeBackendDiff(
       totalSteps: result.steps?.length || 0,
       finishReason: result.finishReason || undefined,
       tokenUsage: {
-        inputTokens: finalUsage.inputTokens,
-        outputTokens: finalUsage.outputTokens,
+        inputTokens: finalUsage.totalInputTokens,
+        outputTokens: finalUsage.totalOutputTokens,
         totalTokens: finalTotalTokens,
       },
     },
-    `BE Analyzer: Analysis complete - found ${changeCount} breaking change${changeCount !== 1 ? "s" : ""} across ${filesAffected} file${filesAffected !== 1 ? "s" : ""}`
+    `Analysis complete - found ${changeCount} breaking change${changeCount !== 1 ? "s" : ""} across ${filesAffected} file${filesAffected !== 1 ? "s" : ""}`
   );
 
   // Log each breaking change once with full details
   if (changeCount > 0) {
-    logger.info("BE Analyzer: Detected breaking changes details:");
     result.output.backendChanges.forEach((change) => {
-      logger.info(
+      logger.debug(
         {
           id: change.id,
           impact: change.impact,
@@ -374,7 +272,7 @@ export async function analyzeBackendDiff(
             changesCount: hunk.changes.length,
           })),
         },
-        `BE Analyzer: Change ${change.id} - ${change.impact} in ${change.file}`
+        `Change ${change.id} - ${change.impact} in ${change.file}`
       );
     });
   }

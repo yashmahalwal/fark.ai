@@ -1,4 +1,3 @@
-import pino from "pino";
 import { z } from "zod/v3";
 import {
   OrchestrateInput,
@@ -8,6 +7,10 @@ import {
 } from "../schemas/orchestrate-schema";
 import { analyzeBackendDiff } from "../agents/be-analyzer";
 import { findFrontendImpacts } from "../agents/frontend-finder";
+import { generatePRComments } from "../agents/comment-generator";
+import { postPRComments } from "../agents/pr-comment-poster";
+import { createLogger, type LogLevel } from "../utils/create-logger";
+import { getBackendTools } from "../tools/github-tools";
 
 export async function runFarkAnalysis(input: OrchestrateInput): Promise<OrchestrateOutput> {
   let validatedInput: OrchestrateInput;
@@ -19,52 +22,56 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
         const path = issue.path.join(".");
         return `${path}: ${issue.message}`;
       });
-      const logger = pino({
-        level: "debug",
-        transport: {
-          target: "pino-pretty",
-          options: {
-            colorize: true,
-            translateTime: "HH:MM:ss Z",
-            ignore: "pid,hostname",
-          },
-        },
-      });
+      const logger = createLogger("debug", "Orchestrate");
       logger.error(
         {
           validationErrors: error.issues,
           errorMessages,
         },
-        "Orchestrate: Input validation failed"
+        "Input validation failed"
       );
     }
     throw error;
   }
 
-  const logger = pino({
-    level: validatedInput.logLevel || "info",
-    transport: {
-      target: "pino-pretty",
-      options: {
-        colorize: true,
-        translateTime: "HH:MM:ss Z",
-        ignore: "pid,hostname",
-      },
-    },
-  });
+  const logLevel = (validatedInput.logLevel || "info") as LogLevel;
+  const logger = createLogger(logLevel, "Orchestrate");
 
   // Step 1: Analyze backend changes
+  logger.info(
+    {
+      owner: validatedInput.backend.repository.owner,
+      repo: validatedInput.backend.repository.repo,
+      pull_number: validatedInput.backend.repository.pull_number,
+    },
+    `Starting Step 1: Analyzing backend changes for PR #${validatedInput.backend.repository.pull_number}`
+  );
   const backendChangesResult = await analyzeBackendDiff(
     validatedInput.backend,
     validatedInput.openaiApiKey,
-    logger,
+    logLevel,
   );
 
   // Step 2: Find frontend impacts for each frontend repository
+  logger.info(
+    {
+      frontendCount: validatedInput.frontends.length,
+      changeCount: backendChangesResult.backendChanges.length,
+    },
+    `Starting Step 2: Finding frontend impacts across ${validatedInput.frontends.length} frontend repository/repositories`
+  );
   const allFrontendImpacts: z.infer<typeof backendChangeWithImpactsSchema>["frontendImpacts"] = [];
 
   for (const frontend of validatedInput.frontends) {
     try {
+      logger.info(
+        {
+          owner: frontend.repository.owner,
+          repo: frontend.repository.repo,
+          branch: frontend.repository.branch,
+        },
+        `Analyzing frontend ${frontend.repository.owner}/${frontend.repository.repo}`
+      );
       const frontendImpactsResult = await findFrontendImpacts(
         {
           repository: frontend.repository,
@@ -73,7 +80,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
           options: frontend.options,
         },
         validatedInput.openaiApiKey,
-        logger,
+        logLevel,
       );
 
       allFrontendImpacts.push(...frontendImpactsResult.frontendImpacts);
@@ -84,7 +91,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
           repo: frontend.repository.repo,
           error: error instanceof Error ? error.message : String(error),
         },
-        `Orchestrate: Failed to analyze frontend ${frontend.repository.owner}/${frontend.repository.repo}`
+        `Failed to analyze frontend ${frontend.repository.owner}/${frontend.repository.repo}`
       );
       // Continue with other frontends even if one fails
     }
@@ -114,13 +121,73 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
     }
   );
 
+  // Step 5: Generate PR comments
+  logger.info(
+    {
+      owner: validatedInput.backend.repository.owner,
+      repo: validatedInput.backend.repository.repo,
+      pull_number: validatedInput.backend.repository.pull_number,
+      changeCount: changesWithImpacts.length,
+      totalImpacts: allFrontendImpacts.length,
+    },
+    `Starting Step 5: Generating PR comments for ${changesWithImpacts.length} backend changes with ${allFrontendImpacts.length} frontend impacts`
+  );
+
+  // Get GitHub tools for comment generator (optional but may be used)
+  const { tools: githubTools } = await getBackendTools(
+    validatedInput.backend.githubMcp.beGithubToken,
+    validatedInput.backend.githubMcp.mcpServerUrl
+  );
+
+  const prCommentsResult = await generatePRComments(
+    {
+      changes: changesWithImpacts,
+      backend_owner: validatedInput.backend.repository.owner,
+      backend_repo: validatedInput.backend.repository.repo,
+      pull_number: validatedInput.backend.repository.pull_number,
+    },
+    githubTools,
+    validatedInput.openaiApiKey,
+    logLevel,
+    validatedInput.commentGeneratorOptions,
+  );
+
+  // Step 6: Post PR comments
+  logger.info(
+    {
+      owner: validatedInput.backend.repository.owner,
+      repo: validatedInput.backend.repository.repo,
+      pull_number: validatedInput.backend.repository.pull_number,
+      commentCount: prCommentsResult.comments.length,
+    },
+    `Starting Step 6: Posting ${prCommentsResult.comments.length} PR comments to PR #${validatedInput.backend.repository.pull_number}`
+  );
+
+  const prCommentPosterResult = await postPRComments(
+    {
+      comments: prCommentsResult,
+      backend_owner: validatedInput.backend.repository.owner,
+      backend_repo: validatedInput.backend.repository.repo,
+      pull_number: validatedInput.backend.repository.pull_number,
+    },
+    githubTools,
+    validatedInput.openaiApiKey,
+    logLevel,
+    validatedInput.prCommentPosterOptions,
+  );
+
+  logger.info(
+    {
+      success: prCommentPosterResult.success,
+      reviewId: prCommentPosterResult.reviewId,
+      message: prCommentPosterResult.message,
+    },
+    `PR comment posting ${prCommentPosterResult.success ? "completed successfully" : "failed"}`
+  );
+
   // Return the combined result
-  // Note: prComments will be generated in a future step (comment-generator)
   return {
     changes: changesWithImpacts,
-    prComments: {
-      summary: "",
-      comments: [],
-    },
+    prComments: prCommentsResult,
   };
 }
