@@ -9,6 +9,7 @@ import {
   type FrontendFinderInput,
   type FrontendImpactsOutput,
 } from "../schemas/frontend-finder-schema";
+import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
 
 // Re-export schemas for backward compatibility
 export {
@@ -22,18 +23,12 @@ export {
 
 /**
  * Agent 2: Frontend Impact Finder
- * Determines where backend API changes impact frontend code using GitHub MCP tools
+ * Determines where backend API changes impact frontend code using filesystem tools
  */
 export async function findFrontendImpacts(
   input: FrontendFinderInput,
-  tools: Record<string, any>,
   openaiApiKey: string,
-  logger: pino.Logger = pino(),
-  options?: {
-    maxSteps?: number;
-    maxOutputTokens?: number;
-    maxTotalTokens?: number;
-  }
+  logger: pino.Logger = pino()
 ): Promise<FrontendImpactsOutput> {
   // Validate inputs using Zod
   let validatedInput: FrontendFinderInput;
@@ -56,11 +51,6 @@ export async function findFrontendImpacts(
     throw error;
   }
 
-  // Validate other parameters
-  if (!tools || Object.keys(tools).length === 0) {
-    throw new Error("Tools are required and must not be empty");
-  }
-
   if (
     !openaiApiKey ||
     typeof openaiApiKey !== "string" ||
@@ -71,24 +61,23 @@ export async function findFrontendImpacts(
     );
   }
 
-  const { frontendRepo, backendChanges } = validatedInput;
+  const { repository, codebasePath, backendChanges, options } = validatedInput;
 
-  logger.debug(
-    {
-      frontendRepo: `${frontendRepo.owner}/${frontendRepo.repo}`,
-      branch: frontendRepo.branch,
-      backendChangesCount: backendChanges.backendChanges.length,
-    },
-    "Frontend Finder: Starting analysis"
-  );
   logger.info(
     {
-      owner: frontendRepo.owner,
-      repo: frontendRepo.repo,
-      branch: frontendRepo.branch,
+      owner: repository.owner,
+      repo: repository.repo,
+      branch: repository.branch,
+      codebasePath,
       changeCount: backendChanges.backendChanges.length,
     },
-    `Frontend Finder: Analyzing ${frontendRepo.owner}/${frontendRepo.repo} (branch: ${frontendRepo.branch}) for ${backendChanges.backendChanges.length} backend changes`
+    `Frontend Finder: Analyzing ${repository.owner}/${repository.repo} (branch: ${repository.branch}) for ${backendChanges.backendChanges.length} backend changes`
+  );
+
+  // Create filesystem tools for codebase
+  const tools = await getReadonlyFilesystemTools(codebasePath);
+  logger.debug(
+    `Frontend Finder: Added filesystem tools for codebase at ${codebasePath}`
   );
 
   const prompt = getFrontendFinderPrompt(input);
@@ -100,11 +89,11 @@ export async function findFrontendImpacts(
   });
 
   // Get limits from options with fallback defaults
-  const MAX_STEPS = options?.maxSteps || 40; // Increased to allow trying multiple standard paths
-  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2); // Force output generation 2 steps before limit
+  const MAX_STEPS = options?.maxSteps || 40;
+  const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2);
   const MAX_OUTPUT_TOKENS = options?.maxOutputTokens || 50000;
-  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 500000; // Increased default for frontend finder (safety margin for deep projects)
-  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85; // Force output at 85% of token limit
+  const MAX_TOTAL_TOKENS = options?.maxTotalTokens || 500000;
+  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85;
 
   // Track total token usage across all steps
   let totalInputTokens = 0;
@@ -115,7 +104,6 @@ export async function findFrontendImpacts(
       maxSteps: MAX_STEPS,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       maxTotalTokens: MAX_TOTAL_TOKENS,
-      toolsCount: Object.keys(tools).length,
     },
     "Frontend Finder: Starting analysis with OpenAI"
   );
@@ -124,7 +112,7 @@ export async function findFrontendImpacts(
     model: openaiClient("gpt-5"),
     output: outputSpec,
     tools,
-    activeTools: ["get_file_contents", "search_code"], // Limit to read-only tools using AI SDK's activeTools
+    activeTools: ["readFile", "bash"],
     stopWhen: stepCountIs(MAX_STEPS), // Stop when model generates text or after max steps
     maxOutputTokens: MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,

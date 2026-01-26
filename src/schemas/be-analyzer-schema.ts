@@ -11,7 +11,6 @@ export const backendRepoSchema = z.object({
 // Input schema
 export const backendInputSchema = z.object({
   repository: backendRepoSchema,
-  openaiApiKey: z.string().min(1).describe("OpenAI API key"),
   codebasePath: z
     .string()
     .min(1)

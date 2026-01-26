@@ -29,6 +29,7 @@ export {
 
 export async function analyzeBackendDiff(
   input: BackendInput,
+  openaiApiKey: string,
   logger: pino.Logger = pino()
 ): Promise<BackendChangesOutput> {
   // Validate inputs using Zod
@@ -52,8 +53,6 @@ export async function analyzeBackendDiff(
     throw error;
   }
 
-  const { repository, codebasePath, githubMcp, openaiApiKey, options } =
-    validatedInput;
   if (
     !openaiApiKey ||
     typeof openaiApiKey !== "string" ||
@@ -63,6 +62,8 @@ export async function analyzeBackendDiff(
       "OpenAI API key is required and must be a non-empty string"
     );
   }
+
+  const { repository, codebasePath, githubMcp, options } = validatedInput;
   logger.info(
     {
       pull_number: repository.pull_number,

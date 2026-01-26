@@ -1,5 +1,6 @@
 import { z } from "zod/v3";
 import { backendChangesSchema } from "./be-analyzer-schema";
+import { agentOptionsSchema } from "./common-schema";
 
 // Shared frontend repo schema
 // Note: branch is required (not optional) for AI SDK schema validation
@@ -16,8 +17,13 @@ export const frontendRepoSchema = z.object({
 
 // Input schema
 export const frontendFinderInputSchema = z.object({
-  frontendRepo: frontendRepoSchema,
+  repository: frontendRepoSchema,
+  codebasePath: z
+    .string()
+    .min(1)
+    .describe("Local filesystem path to frontend codebase (branch checked out)"),
   backendChanges: backendChangesSchema,
+  options: agentOptionsSchema.optional(),
 });
 
 // Output schema - export item schema for reuse

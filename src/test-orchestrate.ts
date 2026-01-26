@@ -14,10 +14,14 @@ import pino from "pino";
 import { z } from "zod/v3";
 import { logZodError } from "./utils/log-zod-error";
 
+// Schema for frontend config from env (without openaiApiKey)
+const frontendConfigFromEnvSchema = z.object({
+  repository: frontendRepoSchema,
+  codebasePath: z.string().min(1),
+});
+
 const envSchema = z.object({
   BACKEND_GITHUB_TOKEN: z.string().min(1),
-  FRONTEND_GITHUB_TOKEN: z.string().min(1),
-  OPENAI_API_KEY: z.string().min(1),
   MCP_SERVER_URL: z.string().url(),
   BACKEND_OWNER: z.string().min(1),
   BACKEND_REPO: z.string().min(1),
@@ -26,10 +30,20 @@ const envSchema = z.object({
     .string()
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().positive()),
-  FRONTEND_REPOS: z.string().transform((val) => {
-    const parsed = JSON.parse(val);
-    return z.array(frontendRepoSchema).parse(parsed);
+  OPENAI_API_KEY: z.string().min(1), // Used for both backend analyzer and frontend finders
+  FRONTENDS: z.string().transform((val) => {
+    try {
+      const parsed = JSON.parse(val);
+      return z.array(frontendConfigFromEnvSchema).parse(parsed);
+    } catch (error) {
+      throw new Error(
+        `Failed to parse FRONTENDS JSON: ${error instanceof Error ? error.message : String(error)}. Ensure FRONTENDS is valid single-line JSON.`
+      );
+    }
   }),
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace"])
+    .optional(),
 });
 
 async function main() {
@@ -47,7 +61,7 @@ async function main() {
   try {
     const env = envSchema.parse(process.env);
 
-    const result = await runFarkAnalysis({
+    await runFarkAnalysis({
       backend: {
         repository: {
           owner: env.BACKEND_OWNER,
@@ -59,15 +73,11 @@ async function main() {
           beGithubToken: env.BACKEND_GITHUB_TOKEN,
           mcpServerUrl: env.MCP_SERVER_URL,
         },
-        openaiApiKey: env.OPENAI_API_KEY,
         options: undefined,
       },
-      frontendRepos: env.FRONTEND_REPOS,
-      frontendGithubToken: env.FRONTEND_GITHUB_TOKEN,
+      frontends: env.FRONTENDS,
       openaiApiKey: env.OPENAI_API_KEY,
-      logLevel: "debug",
-      beAnalyzerOptions: undefined,
-      frontendFinderOptions: undefined,
+      logLevel: env.LOG_LEVEL || "info",
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

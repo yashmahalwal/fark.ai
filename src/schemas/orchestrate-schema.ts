@@ -1,19 +1,25 @@
 import { z } from "zod/v3";
 import pino from "pino";
 import { backendInputSchema } from "./be-analyzer-schema";
-import { frontendRepoSchema } from "./frontend-finder-schema";
+import { frontendFinderInputSchema } from "./frontend-finder-schema";
 import { backendChangeItemSchema } from "./be-analyzer-schema";
 import { frontendImpactItemSchema } from "./frontend-finder-schema";
 import { prCommentsSchema } from "./comment-generator-schema";
 
+// Frontend configuration schema - reuses frontendFinderInputSchema, excluding backendChanges and openaiApiKey
+export const frontendConfigSchema = frontendFinderInputSchema.pick({
+  repository: true,
+  codebasePath: true,
+  options: true,
+});
+
 // Input schema for orchestration - reuses schemas from agents
 export const orchestrateInputSchema = z.object({
   backend: backendInputSchema,
-  frontendGithubToken: z
-    .string()
-    .describe("GitHub token for frontend repository access"),
-  frontendRepos: z.array(frontendRepoSchema),
-  openaiApiKey: z.string().describe("OpenAI API key"),
+  frontends: z
+    .array(frontendConfigSchema)
+    .min(1),
+  openaiApiKey: z.string().min(1).describe("OpenAI API key for all agents"),
   logLevel: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"] as [
       pino.Level,
@@ -22,24 +28,6 @@ export const orchestrateInputSchema = z.object({
     .optional()
     .default("info")
     .describe("Log level (defaults to 'info')"),
-  // BE Analyzer options
-  beAnalyzerOptions: z
-    .object({
-      maxSteps: z.number().int().positive().optional(),
-      maxOutputTokens: z.number().int().positive().optional(),
-      maxTotalTokens: z.number().int().positive().optional(),
-    })
-    .optional()
-    .describe("BE Analyzer configuration options"),
-  // Frontend Finder options
-  frontendFinderOptions: z
-    .object({
-      maxSteps: z.number().int().positive().optional(),
-      maxOutputTokens: z.number().int().positive().optional(),
-      maxTotalTokens: z.number().int().positive().optional(),
-    })
-    .optional()
-    .describe("Frontend Finder configuration options"),
 });
 
 export type OrchestrateInput = z.infer<typeof orchestrateInputSchema>;
