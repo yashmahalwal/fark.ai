@@ -41,7 +41,9 @@ export async function getReadonlyFilesystemTools(codebasePath: string) {
   const readFileTool = tool({
     description: "Read the contents of a file from the codebase.",
     inputSchema: z.object({
-      path: z.string().describe("The path to the file to read (relative to codebase root)"),
+      path: z
+        .string()
+        .describe("The path to the file to read (relative to codebase root)"),
     }),
     execute: async ({ path: filePath }) => {
       try {
@@ -78,14 +80,14 @@ Common operations:
         // Prepend cd to ensure commands run in the working directory
         const fullCommand = `cd "${cwd}" && ${command}`;
         const result = await bash.exec(fullCommand);
-        
+
         if (result.exitCode !== 0) {
           // Non-zero exit codes are surfaced as errors
           throw new Error(
             `bash failed (code ${result.exitCode}): ${result.stderr || result.stdout}`
           );
         }
-        
+
         return {
           stdout: result.stdout,
           stderr: result.stderr,

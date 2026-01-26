@@ -14,16 +14,15 @@ export const backendInputSchema = z.object({
   codebasePath: z
     .string()
     .min(1)
-    .describe("Local filesystem path to backend codebase (PR branch checked out)"),
+    .describe(
+      "Local filesystem path to backend codebase (PR branch checked out)"
+    ),
   githubMcp: z.object({
     beGithubToken: z
       .string()
       .min(1)
       .describe("GitHub token for backend repository access"),
-    mcpServerUrl: z
-      .string()
-      .min(1)
-      .describe("GitHub MCP server URL"),
+    mcpServerUrl: z.string().min(1).describe("GitHub MCP server URL"),
   }),
   options: agentOptionsSchema.optional(),
 });

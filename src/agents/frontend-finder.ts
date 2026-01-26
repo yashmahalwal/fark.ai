@@ -135,10 +135,16 @@ export async function findFrontendImpacts(
             logger.warn(params, "Approaching total token limit");
           },
           onTokenForce: (params) => {
-            logger.warn(params, "Approaching token limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching token limit, forcing output generation"
+            );
           },
           onStepForce: (params) => {
-            logger.warn(params, "Approaching step limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching step limit, forcing output generation"
+            );
           },
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");

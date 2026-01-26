@@ -102,8 +102,14 @@ export async function postPRComments(
           // Remove 'event' parameter ONLY for method="create" to ensure draft review creation
           // Allow 'event' parameter for method="submit_pending" to submit the review
           // Note: commitID is required and should be the PR head SHA (even for multi-commit PRs, use the HEAD commit)
-          const method = args && typeof args === "object" ? args.method : undefined;
-          if (method === "create" && args && typeof args === "object" && "event" in args) {
+          const method =
+            args && typeof args === "object" ? args.method : undefined;
+          if (
+            method === "create" &&
+            args &&
+            typeof args === "object" &&
+            "event" in args
+          ) {
             const { event, ...restArgs } = args;
             if (event !== undefined) {
               logger.warn(
@@ -174,10 +180,16 @@ export async function postPRComments(
             content: `⚠️ WARNING: You are approaching the token limit (${percentage}%). If the review has been created but not yet submitted, you MUST submit it in the next step using pull_request_review_write with method="submit_pending", event="COMMENT". Do NOT wait for more comments - submit now if not already submitted.`,
           }),
           onTokenForce: (params) => {
-            logger.warn(params, "Approaching token limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching token limit, forcing output generation"
+            );
           },
           onStepForce: (params) => {
-            logger.warn(params, "Approaching step limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching step limit, forcing output generation"
+            );
           },
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
@@ -261,14 +273,16 @@ export async function postPRComments(
         totalTokens: finalTotalTokens,
       },
       // Log tool execution summary
-      toolCallsCount: result.steps?.reduce(
-        (sum, step) => sum + (step.toolCalls?.length || 0),
-        0
-      ) || 0,
-      toolResultsCount: result.steps?.reduce(
-        (sum, step) => sum + (step.toolResults?.length || 0),
-        0
-      ) || 0,
+      toolCallsCount:
+        result.steps?.reduce(
+          (sum, step) => sum + (step.toolCalls?.length || 0),
+          0
+        ) || 0,
+      toolResultsCount:
+        result.steps?.reduce(
+          (sum, step) => sum + (step.toolResults?.length || 0),
+          0
+        ) || 0,
     },
     `Review creation ${result.output.success ? "complete" : "failed"} - ${result.output.message}`
   );

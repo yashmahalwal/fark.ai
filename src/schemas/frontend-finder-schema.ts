@@ -21,7 +21,9 @@ export const frontendFinderInputSchema = z.object({
   codebasePath: z
     .string()
     .min(1)
-    .describe("Local filesystem path to frontend codebase (branch checked out)"),
+    .describe(
+      "Local filesystem path to frontend codebase (branch checked out)"
+    ),
   backendChanges: backendChangesSchema,
   options: agentOptionsSchema.optional(),
 });

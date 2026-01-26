@@ -296,34 +296,34 @@ export async function enforceLimits<TOOLS extends ToolSet>(params: {
     }
   }
 
-    // When approaching step limit, force the model to generate output
-    if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
-      const toolCallsCount = countToolCalls(steps);
+  // When approaching step limit, force the model to generate output
+  if (stepNumber >= FORCE_OUTPUT_AT_STEP) {
+    const toolCallsCount = countToolCalls(steps);
 
-      onStepForce?.({
-        stepNumber,
-        maxSteps: MAX_STEPS,
-        totalToolCalls: toolCallsCount,
-        stepsCompleted: steps.length,
-      });
+    onStepForce?.({
+      stepNumber,
+      maxSteps: MAX_STEPS,
+      totalToolCalls: toolCallsCount,
+      stepsCompleted: steps.length,
+    });
 
-      const hasOutputResult = hasOutput(steps);
+    const hasOutputResult = hasOutput(steps);
 
-      // Always force output at step limit if we don't have it yet
-      if (!hasOutputResult) {
-        const reminderMessage: ModelMessage = {
-          role: "user",
-          content:
-            stepForceMessage?.() ||
-            `IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete results immediately.`,
-        };
+    // Always force output at step limit if we don't have it yet
+    if (!hasOutputResult) {
+      const reminderMessage: ModelMessage = {
+        role: "user",
+        content:
+          stepForceMessage?.() ||
+          `IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete results immediately.`,
+      };
 
-        return {
-          toolChoice: "none",
-          messages: [...messages, reminderMessage],
-        };
-      }
+      return {
+        toolChoice: "none",
+        messages: [...messages, reminderMessage],
+      };
     }
+  }
 
   // Default: continue with normal execution
   return {};

@@ -112,10 +112,16 @@ export async function generatePRComments(
             logger.warn(params, "Approaching total token limit");
           },
           onTokenForce: (params) => {
-            logger.warn(params, "Approaching token limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching token limit, forcing output generation"
+            );
           },
           onStepForce: (params) => {
-            logger.warn(params, "Approaching step limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching step limit, forcing output generation"
+            );
           },
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
@@ -202,7 +208,9 @@ export async function generatePRComments(
   // Log summary at info level (important output)
   logger.info(
     {
-      summary: result.output.summary.substring(0, 200) + (result.output.summary.length > 200 ? "..." : ""),
+      summary:
+        result.output.summary.substring(0, 200) +
+        (result.output.summary.length > 200 ? "..." : ""),
       summaryLength: result.output.summary.length,
     },
     "Generated summary"
@@ -220,7 +228,9 @@ export async function generatePRComments(
           startSide: comment.startSide,
           endSide: comment.endSide,
           bodyLength: comment.body.length,
-          bodyPreview: comment.body.substring(0, 200) + (comment.body.length > 200 ? "..." : ""),
+          bodyPreview:
+            comment.body.substring(0, 200) +
+            (comment.body.length > 200 ? "..." : ""),
         },
         `Comment ${index + 1} - ${comment.path}:${comment.startLine}${comment.endLine !== comment.startLine ? `-${comment.endLine}` : ""}`
       );

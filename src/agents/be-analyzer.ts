@@ -85,8 +85,7 @@ export async function analyzeBackendDiff(
   const { tools: githubTools } = await getBackendTools(
     githubMcp.beGithubToken,
     githubMcp.mcpServerUrl
-  )
-
+  );
 
   // Create filesystem tools (for code reading)
   const fsTools = await getReadonlyFilesystemTools(codebasePath);
@@ -132,7 +131,9 @@ export async function analyzeBackendDiff(
     model: openaiClient("gpt-5"),
     output: outputSpec,
     tools: allTools,
-    activeTools: ["pull_request_read", "readFile", "bash"] as Array<keyof typeof allTools>,
+    activeTools: ["pull_request_read", "readFile", "bash"] as Array<
+      keyof typeof allTools
+    >,
     stopWhen: stepCountIs(limits.MAX_STEPS), // Stop when model generates text or after max steps
     maxOutputTokens: limits.MAX_OUTPUT_TOKENS, // Limit output tokens
     prompt,
@@ -147,10 +148,16 @@ export async function analyzeBackendDiff(
             logger.warn(params, "Approaching total token limit");
           },
           onTokenForce: (params) => {
-            logger.warn(params, "Approaching token limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching token limit, forcing output generation"
+            );
           },
           onStepForce: (params) => {
-            logger.warn(params, "Approaching step limit, forcing output generation");
+            logger.warn(
+              params,
+              "Approaching step limit, forcing output generation"
+            );
           },
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");

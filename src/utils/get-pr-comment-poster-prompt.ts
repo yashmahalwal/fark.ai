@@ -6,9 +6,9 @@ import { PRCommentPosterInput } from "../schemas/pr-comment-poster-schema";
  * @returns The complete prompt string for the comment poster
  */
 export function getPRCommentPosterPrompt(input: PRCommentPosterInput): string {
-   const { comments, backend_owner, backend_repo, pull_number } = input;
+  const { comments, backend_owner, backend_repo, pull_number } = input;
 
-   return `You are an agent that creates a pending (draft) PR review, adds inline comments to it, and then submits it.
+  return `You are an agent that creates a pending (draft) PR review, adds inline comments to it, and then submits it.
 
 INPUT DATA:
 - comments.summary: ${comments.summary}
@@ -70,5 +70,5 @@ WORKFLOW:
    - success: true if review was created AND submitted (even if some comments failed)
    - reviewId: ID of the review (from step 2 - the reviewId from the create response)
    - message: Status message describing what was accomplished (e.g., "Review created and submitted successfully. Added X of Y comments.")
-}`
+}`;
 }

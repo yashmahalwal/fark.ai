@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./  # or your-org/fark-ai@v1
+      - uses: ./ # or your-org/fark-ai@v1
         # with:
         #   name: 'Custom Name'
 ```
@@ -21,7 +21,7 @@ jobs:
 ## Inputs
 
 <!-- Add your inputs documentation here -->
-<!-- 
+<!--
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | name  | Name to use in greeting | No | 'World' |
@@ -54,4 +54,3 @@ npm test
 ## License
 
 MIT
-

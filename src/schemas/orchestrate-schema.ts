@@ -17,9 +17,7 @@ export const frontendConfigSchema = frontendFinderInputSchema.pick({
 // Input schema for orchestration - reuses schemas from agents
 export const orchestrateInputSchema = z.object({
   backend: backendInputSchema,
-  frontends: z
-    .array(frontendConfigSchema)
-    .min(1),
+  frontends: z.array(frontendConfigSchema).min(1),
   openaiApiKey: z.string().min(1).describe("OpenAI API key for all agents"),
   logLevel: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"] as [

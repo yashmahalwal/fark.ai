@@ -12,7 +12,9 @@ import { postPRComments } from "../agents/pr-comment-poster";
 import { createLogger, type LogLevel } from "../utils/create-logger";
 import { getBackendTools } from "../tools/github-tools";
 
-export async function runFarkAnalysis(input: OrchestrateInput): Promise<OrchestrateOutput> {
+export async function runFarkAnalysis(
+  input: OrchestrateInput
+): Promise<OrchestrateOutput> {
   let validatedInput: OrchestrateInput;
   try {
     validatedInput = orchestrateInputSchema.parse(input);
@@ -49,7 +51,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
   const backendChangesResult = await analyzeBackendDiff(
     validatedInput.backend,
     validatedInput.openaiApiKey,
-    logLevel,
+    logLevel
   );
 
   // Step 2: Find frontend impacts for each frontend repository
@@ -60,7 +62,9 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
     },
     `Starting Step 2: Finding frontend impacts across ${validatedInput.frontends.length} frontend repository/repositories`
   );
-  const allFrontendImpacts: z.infer<typeof backendChangeWithImpactsSchema>["frontendImpacts"] = [];
+  const allFrontendImpacts: z.infer<
+    typeof backendChangeWithImpactsSchema
+  >["frontendImpacts"] = [];
 
   for (const frontend of validatedInput.frontends) {
     try {
@@ -80,7 +84,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
           options: frontend.options,
         },
         validatedInput.openaiApiKey,
-        logLevel,
+        logLevel
       );
 
       allFrontendImpacts.push(...frontendImpactsResult.frontendImpacts);
@@ -149,7 +153,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
     githubTools,
     validatedInput.openaiApiKey,
     logLevel,
-    validatedInput.commentGeneratorOptions,
+    validatedInput.commentGeneratorOptions
   );
 
   // Step 6: Post PR comments
@@ -173,7 +177,7 @@ export async function runFarkAnalysis(input: OrchestrateInput): Promise<Orchestr
     githubTools,
     validatedInput.openaiApiKey,
     logLevel,
-    validatedInput.prCommentPosterOptions,
+    validatedInput.prCommentPosterOptions
   );
 
   logger.info(
