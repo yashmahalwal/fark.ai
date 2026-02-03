@@ -27,6 +27,12 @@ export const orchestrateInputSchema = z.object({
     .optional()
     .default("info")
     .describe("Log level (defaults to 'info')"),
+  frontendFinderConcurrencyLimit: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Concurrency limit for frontend finder operations (defaults to 5 when not provided)"),
   commentGeneratorOptions: agentOptionsSchema.optional(),
   prCommentPosterOptions: agentOptionsSchema.optional(),
 });

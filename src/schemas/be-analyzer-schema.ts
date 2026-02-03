@@ -1,5 +1,5 @@
 import { z } from "zod/v3";
-import { agentOptionsSchema } from "./common-schema";
+import { agentOptionsSchema, githubMcpSchema } from "./common-schema";
 
 // Shared backend repository schema
 export const backendRepoSchema = z.object({
@@ -17,13 +17,7 @@ export const backendInputSchema = z.object({
     .describe(
       "Local filesystem path to backend codebase (PR branch checked out)"
     ),
-  githubMcp: z.object({
-    beGithubToken: z
-      .string()
-      .min(1)
-      .describe("GitHub token for backend repository access"),
-    mcpServerUrl: z.string().min(1).describe("GitHub MCP server URL"),
-  }),
+  githubMcp: githubMcpSchema,
   options: agentOptionsSchema.optional(),
 });
 
@@ -34,7 +28,7 @@ export const backendChangeItemSchema = z.object({
   id: z
     .string()
     .describe(
-      "Unique identifier for this backend change (use index as string, e.g., '0', '1', '2')"
+      "Unique identifier for this backend change - must be globally unique across ALL batches (use sequential IDs like '0', '1', '2', '3'...)"
     ),
   file: z.string().describe("File path where the change occurred"),
   diffHunks: z.array(
@@ -78,9 +72,32 @@ export const backendChangeItemSchema = z.object({
   description: z.string().describe("Human-readable description of the change"),
 });
 
+// Batch schema - groups of similar changes for efficient frontend analysis
+export const backendChangeBatchSchema = z.object({
+  batchId: z
+    .string()
+    .describe(
+      "Unique identifier for this batch (e.g., '0', '1', '2') - used for tracking"
+    ),
+  description: z
+    .string()
+    .describe(
+      "Brief description of what this batch contains (e.g., 'GraphQL schema changes', 'REST endpoint changes')"
+    ),
+  changes: z
+    .array(backendChangeItemSchema)
+    .describe(
+      "Array of backend changes belonging to this batch. Each change.id must be unique across all batches."
+    ),
+});
+
 // Output schema
 export const backendChangesSchema = z.object({
-  backendChanges: z.array(backendChangeItemSchema),
+  batches: z
+    .array(backendChangeBatchSchema)
+    .describe(
+      "Batches of similar changes for efficient frontend analysis. Group related changes together (e.g., all GraphQL changes, all REST changes). Aim for 5-10 batches maximum. All changes must be included in exactly one batch."
+    ),
 });
 
 export type BackendInput = z.infer<typeof backendInputSchema>;

@@ -1,5 +1,6 @@
 import { z } from "zod/v3";
 import { backendChangeWithImpactsSchema } from "./orchestrate-schema";
+import { agentOptionsSchema } from "./common-schema";
 
 // Input schema - accepts combined changes structure
 export const commentGeneratorInputSchema = z.object({
@@ -7,6 +8,7 @@ export const commentGeneratorInputSchema = z.object({
   backend_owner: z.string().describe("Backend repository owner"),
   backend_repo: z.string().describe("Backend repository name"),
   pull_number: z.number().describe("Pull request number"),
+  options: agentOptionsSchema.optional(),
 });
 
 // Output schema - comment data for octokit

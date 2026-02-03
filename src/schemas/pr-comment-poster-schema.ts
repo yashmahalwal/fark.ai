@@ -1,5 +1,6 @@
 import { z } from "zod/v3";
 import { prCommentsSchema } from "./comment-generator-schema";
+import { agentOptionsSchema, githubMcpSchema } from "./common-schema";
 
 // Input schema - accepts comment data from comment-generator
 export const prCommentPosterInputSchema = z.object({
@@ -7,6 +8,8 @@ export const prCommentPosterInputSchema = z.object({
   backend_owner: z.string().describe("Backend repository owner"),
   backend_repo: z.string().describe("Backend repository name"),
   pull_number: z.number().describe("Pull request number"),
+  githubMcp: githubMcpSchema,
+  options: agentOptionsSchema.optional(),
 });
 
 // Output schema - review ID and status

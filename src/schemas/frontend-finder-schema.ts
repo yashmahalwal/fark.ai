@@ -1,5 +1,5 @@
 import { z } from "zod/v3";
-import { backendChangesSchema } from "./be-analyzer-schema";
+import { backendChangeBatchSchema } from "./be-analyzer-schema";
 import { agentOptionsSchema } from "./common-schema";
 
 // Shared frontend repo schema
@@ -24,12 +24,17 @@ export const frontendFinderInputSchema = z.object({
     .describe(
       "Local filesystem path to frontend codebase (branch checked out)"
     ),
-  backendChanges: backendChangesSchema,
+  backendBatch: backendChangeBatchSchema,
   options: agentOptionsSchema.optional(),
 });
 
 // Output schema - export item schema for reuse
 export const frontendImpactItemSchema = z.object({
+  backendBatchId: z
+    .string()
+    .describe(
+      "ID of the backend batch that contains the change causing this impact (references backendBatch.batchId)"
+    ),
   backendChangeId: z
     .string()
     .describe(

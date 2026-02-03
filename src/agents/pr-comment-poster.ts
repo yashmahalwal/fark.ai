@@ -13,12 +13,7 @@ import {
   type PRCommentPosterInput,
   type PRCommentPosterOutput,
 } from "../schemas/pr-comment-poster-schema";
-
-// Re-export for backward compatibility
-export type {
-  PRCommentPosterInput,
-  PRCommentPosterOutput,
-} from "../schemas/pr-comment-poster-schema";
+import { getBackendTools } from "../tools/github-tools";
 
 /**
  * Agent 4: PR Comment Poster
@@ -27,14 +22,8 @@ export type {
  */
 export async function postPRComments(
   input: PRCommentPosterInput,
-  tools: Record<string, any>,
   openaiApiKey: string,
-  logLevel: LogLevel = "info",
-  options?: {
-    maxSteps?: number;
-    maxOutputTokens?: number;
-    maxTotalTokens?: number;
-  }
+  logLevel: LogLevel = "info"
 ): Promise<PRCommentPosterOutput> {
   const logger = createLogger(logLevel, "PR Comment Poster");
   // Validate inputs using Zod
@@ -50,12 +39,20 @@ export async function postPRComments(
     );
   }
 
-  // Validate tools
-  if (!tools || Object.keys(tools).length === 0) {
-    throw new Error("Tools are required and must not be empty");
-  }
+  const {
+    comments,
+    backend_owner,
+    backend_repo,
+    pull_number,
+    githubMcp,
+    options,
+  } = validatedInput;
 
-  const { comments, backend_owner, backend_repo, pull_number } = validatedInput;
+  // Create GitHub tools (for PR operations)
+  const { tools: githubTools } = await getBackendTools(
+    githubMcp.token,
+    githubMcp.mcpServerUrl
+  );
 
   logger.info(
     {
@@ -77,7 +74,7 @@ export async function postPRComments(
 
   // Wrap pull_request_review_write tool to intercept and remove 'event' parameter before execution
   // This ensures draft reviews are created by removing the 'event' parameter if present
-  const wrappedTools: Record<string, any> = { ...tools };
+  const wrappedTools: Record<string, any> = { ...githubTools };
   if (wrappedTools.pull_request_review_write) {
     const originalTool = wrappedTools.pull_request_review_write;
 
@@ -148,13 +145,13 @@ export async function postPRComments(
       maxSteps: limits.MAX_STEPS,
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
-      model: "gpt-5",
+      model: "gpt-5.2",
     },
     "Starting review creation with OpenAI"
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-5"),
+    model: openaiClient("gpt-5.2"),
     output: outputSpec,
     tools: wrappedTools,
     activeTools: [

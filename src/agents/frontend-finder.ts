@@ -16,16 +16,6 @@ import {
   trackTokenUsage,
 } from "../utils/limit-checks";
 
-// Re-export schemas for backward compatibility
-export {
-  frontendRepoSchema,
-  frontendFinderInputSchema,
-  frontendImpactItemSchema,
-  frontendImpactsSchema,
-  type FrontendFinderInput,
-  type FrontendImpactsOutput,
-} from "../schemas/frontend-finder-schema";
-
 /**
  * Agent 2: Frontend Impact Finder
  * Determines where backend API changes impact frontend code using filesystem tools
@@ -35,7 +25,14 @@ export async function findFrontendImpacts(
   openaiApiKey: string,
   logLevel: LogLevel = "info"
 ): Promise<FrontendImpactsOutput> {
-  const logger = createLogger(logLevel, "Frontend Finder");
+  const repoLabel =
+    input.repository != null
+      ? `${input.repository.owner}/${input.repository.repo}`
+      : "";
+  const logger = createLogger(
+    logLevel,
+    repoLabel ? `Frontend Finder [${repoLabel}]` : "Frontend Finder"
+  );
   // Validate inputs using Zod
   let validatedInput: FrontendFinderInput;
   try {
@@ -68,7 +65,7 @@ export async function findFrontendImpacts(
     );
   }
 
-  const { repository, codebasePath, backendChanges, options } = validatedInput;
+  const { repository, codebasePath, backendBatch, options } = validatedInput;
 
   logger.info(
     {
@@ -76,9 +73,11 @@ export async function findFrontendImpacts(
       repo: repository.repo,
       branch: repository.branch,
       codebasePath,
-      changeCount: backendChanges.backendChanges.length,
+      batchId: backendBatch.batchId,
+      batchDescription: backendBatch.description,
+      changeCount: backendBatch.changes.length,
     },
-    `Analyzing ${repository.owner}/${repository.repo} (branch: ${repository.branch}) for ${backendChanges.backendChanges.length} backend changes`
+    `Analyzing ${repository.owner}/${repository.repo} (branch: ${repository.branch}) for batch ${backendBatch.batchId}: ${backendBatch.description} (${backendBatch.changes.length} change${backendBatch.changes.length !== 1 ? "s" : ""})`
   );
 
   // Create filesystem tools for codebase
@@ -111,13 +110,13 @@ export async function findFrontendImpacts(
       maxSteps: limits.MAX_STEPS,
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
-      model: "gpt-5",
+      model: "gpt-5.2",
     },
     "Starting analysis with OpenAI"
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-5"),
+    model: openaiClient("gpt-5.2"),
     output: outputSpec,
     tools,
     activeTools: ["readFile", "bash"],
@@ -239,6 +238,7 @@ export async function findFrontendImpacts(
         logger.debug(
           {
             index: index + 1,
+            backendBatchId: impact.backendBatchId,
             backendChangeId: impact.backendChangeId,
             frontendRepo: impact.frontendRepo,
             file: impact.file,

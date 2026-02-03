@@ -14,27 +14,14 @@ import {
   type PRCommentsOutput,
 } from "../schemas/comment-generator-schema";
 
-// Re-export for backward compatibility
-export type {
-  CommentGeneratorInput,
-  PRCommentsOutput,
-} from "../schemas/comment-generator-schema";
-
 /**
  * Agent 3: PR Comment Generator
  * Generates inline PR comments for backend changes with frontend impact information
- * Posts comments directly to the PR using GitHub MCP tools
  */
 export async function generatePRComments(
   input: CommentGeneratorInput,
-  tools: Record<string, any>,
   openaiApiKey: string,
-  logLevel: LogLevel = "info",
-  options?: {
-    maxSteps?: number;
-    maxOutputTokens?: number;
-    maxTotalTokens?: number;
-  }
+  logLevel: LogLevel = "info"
 ): Promise<PRCommentsOutput> {
   const logger = createLogger(logLevel, "Comment Generator");
   // Validate inputs using Zod
@@ -50,9 +37,8 @@ export async function generatePRComments(
     );
   }
 
-  // Tools are optional - comment generator just generates comments, doesn't post them
-
-  const { changes, backend_owner, backend_repo, pull_number } = validatedInput;
+  const { changes, backend_owner, backend_repo, pull_number, options } =
+    validatedInput;
 
   const totalImpacts = changes.reduce(
     (sum, change) => sum + change.frontendImpacts.length,

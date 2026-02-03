@@ -27,17 +27,8 @@ export async function getReadonlyFilesystemTools(codebasePath: string) {
     root: absoluteRoot, // read-only lower layer
   });
 
-  // Create a Bash instance using this filesystem
-  const bash = new Bash({
-    fs,
-    cwd: "/",
-  });
+  const bash = new Bash({ fs, cwd: fs.getMountPoint() });
 
-  const cwd = "/";
-
-  /**
-   * readFile tool: reads file on demand as text
-   */
   const readFileTool = tool({
     description: "Read the contents of a file from the codebase.",
     inputSchema: z.object({
@@ -47,7 +38,7 @@ export async function getReadonlyFilesystemTools(codebasePath: string) {
     }),
     execute: async ({ path: filePath }) => {
       try {
-        const resolvedPath = path.posix.resolve(cwd, filePath);
+        const resolvedPath = path.posix.resolve("/", filePath);
         const content = await fs.readFile(resolvedPath, "utf-8");
         return { content };
       } catch (error) {
@@ -58,28 +49,15 @@ export async function getReadonlyFilesystemTools(codebasePath: string) {
     },
   });
 
-  /**
-   * bash tool: executes a shell command inside this just-bash environment
-   */
   const bashTool = tool({
-    description: `Execute bash commands in the sandbox environment.
-
-WORKING DIRECTORY: ${cwd}
-All commands execute from this directory. Use relative paths from here.
-
-Common operations:
-  ls -la              # List files with details
-  find . -name '*.ts' # Find files by pattern
-  grep -r 'pattern' . # Search file contents
-  cat <file>          # View file contents`,
+    description:
+      "Execute bash commands in the codebase sandbox. Commands are run as given.",
     inputSchema: z.object({
       command: z.string().describe("The bash command to execute"),
     }),
     execute: async ({ command }) => {
       try {
-        // Prepend cd to ensure commands run in the working directory
-        const fullCommand = `cd "${cwd}" && ${command}`;
-        const result = await bash.exec(fullCommand);
+        const result = await bash.exec(command);
 
         if (result.exitCode !== 0) {
           // Non-zero exit codes are surfaced as errors

@@ -1,17 +1,117 @@
 name: "fark-ai"
-description: "Fark AI GitHub Action"
+description: "Analyzes backend API changes and identifies breaking impacts on frontend codebases"
 inputs:
-  # Add your inputs here
-  # example:
-  #   name:
-  #     description: 'Name of the person to greet'
-  #     required: true
-  #     default: 'World'
+  # Required: GitHub and OpenAI tokens
+  backend_github_token:
+    description: "GitHub token for backend repository access (GitHub MCP operations)"
+    required: true
+  openai_api_key:
+    description: "OpenAI API key for all AI agents"
+    required: true
+  github_mcp_server_url:
+    description: "GitHub MCP Server URL"
+    required: false
+    default: "https://api.githubcopilot.com/mcp/"
+
+  # Backend configuration
+  backend_owner:
+    description: "Backend repository owner"
+    required: true
+  backend_repo:
+    description: "Backend repository name"
+    required: true
+  backend_pr_number:
+    description: "Pull request number to analyze (defaults to context PR number if available)"
+    required: false
+  backend_codebase_path:
+    description: "Local filesystem path to backend codebase (defaults to ${{ github.workspace }})"
+    required: false
+
+  # Frontend configuration (JSON array format - YAML arrays in workflow are JSON-compatible)
+  frontends:
+    description: |
+      Frontend repositories configuration as JSON array (YAML arrays in workflow files are automatically JSON-compatible).
+      Example in workflow YAML:
+      frontends: |
+        [
+          {
+            "repository": {
+              "owner": "your-org",
+              "repo": "fark-frontend-demo",
+              "branch": "main"
+            },
+            "codebasePath": "/path/to/frontend-demo"
+          },
+          {
+            "repository": {
+              "owner": "your-org",
+              "repo": "fark-mobile-demo",
+              "branch": "main"
+            },
+            "codebasePath": "/path/to/mobile-demo"
+          }
+        ]
+    required: true
+
+  # Logging
+  log_level:
+    description: "Log level (fatal, error, warn, info, debug, trace)"
+    required: false
+    default: "info"
+
+  # Optional: Agent token limits (for larger PRs)
+  # BE Analyzer limits
+  be_analyzer_max_steps:
+    description: "Maximum steps for BE Analyzer (default: 20)"
+    required: false
+  be_analyzer_max_output_tokens:
+    description: "Maximum output tokens for BE Analyzer (default: 50000)"
+    required: false
+  be_analyzer_max_total_tokens:
+    description: "Maximum total tokens for BE Analyzer (default: 200000)"
+    required: false
+
+  # Frontend Finder limits
+  frontend_finder_max_steps:
+    description: "Maximum steps for Frontend Finder (default: 40)"
+    required: false
+  frontend_finder_max_output_tokens:
+    description: "Maximum output tokens for Frontend Finder (default: 50000)"
+    required: false
+  frontend_finder_max_total_tokens:
+    description: "Maximum total tokens for Frontend Finder (default: 500000)"
+    required: false
+
+  # Comment Generator limits
+  comment_generator_max_steps:
+    description: "Maximum steps for Comment Generator (default: 15)"
+    required: false
+  comment_generator_max_output_tokens:
+    description: "Maximum output tokens for Comment Generator (default: 30000)"
+    required: false
+  comment_generator_max_total_tokens:
+    description: "Maximum total tokens for Comment Generator (default: 100000)"
+    required: false
+
+  # PR Comment Poster limits
+  pr_comment_poster_max_steps:
+    description: "Maximum steps for PR Comment Poster (default: 60)"
+    required: false
+  pr_comment_poster_max_output_tokens:
+    description: "Maximum output tokens for PR Comment Poster (default: 5000)"
+    required: false
+  pr_comment_poster_max_total_tokens:
+    description: "Maximum total tokens for PR Comment Poster (default: 300000)"
+    required: false
+
 outputs:
-  # Add your outputs here
-  # example:
-  #   result:
-  #     description: 'The result of the action'
+  changes_count:
+    description: "Number of backend changes detected"
+  impacts_count:
+    description: "Total number of frontend impacts found"
+  comments_count:
+    description: "Number of PR comments posted"
+
 runs:
   using: "node20"
   main: "dist/index.js"

@@ -1,4 +1,5 @@
 import { z } from "zod/v3";
+import pLimit from "p-limit";
 import {
   OrchestrateInput,
   orchestrateInputSchema,
@@ -10,7 +11,6 @@ import { findFrontendImpacts } from "../agents/frontend-finder";
 import { generatePRComments } from "../agents/comment-generator";
 import { postPRComments } from "../agents/pr-comment-poster";
 import { createLogger, type LogLevel } from "../utils/create-logger";
-import { getBackendTools } from "../tools/github-tools";
 
 export async function runFarkAnalysis(
   input: OrchestrateInput
@@ -54,75 +54,171 @@ export async function runFarkAnalysis(
     logLevel
   );
 
-  // Step 2: Find frontend impacts for each frontend repository
+  // Step 2: Find frontend impacts for each frontend repository (processing by batches in parallel)
+  const totalChangeCount = backendChangesResult.batches.reduce(
+    (sum, batch) => sum + batch.changes.length,
+    0
+  );
   logger.info(
     {
       frontendCount: validatedInput.frontends.length,
-      changeCount: backendChangesResult.backendChanges.length,
+      changeCount: totalChangeCount,
+      batchCount: backendChangesResult.batches.length,
     },
-    `Starting Step 2: Finding frontend impacts across ${validatedInput.frontends.length} frontend repository/repositories`
+    `Starting Step 2: Finding frontend impacts across ${validatedInput.frontends.length} frontend repository/repositories using ${backendChangesResult.batches.length} batches`
   );
   const allFrontendImpacts: z.infer<
     typeof backendChangeWithImpactsSchema
   >["frontendImpacts"] = [];
 
+  // Create all tasks (frontend × batch combinations)
+  const tasks: Array<{
+    frontend: (typeof validatedInput.frontends)[number];
+    batch: (typeof backendChangesResult.batches)[number];
+  }> = [];
+
   for (const frontend of validatedInput.frontends) {
-    try {
-      logger.info(
+    for (const batch of backendChangesResult.batches) {
+      if (batch.changes.length > 0) {
+        tasks.push({ frontend, batch });
+      } else {
+        logger.warn(
+          {
+            batchId: batch.batchId,
+            owner: frontend.repository.owner,
+            repo: frontend.repository.repo,
+          },
+          `Batch ${batch.batchId} has no changes, skipping for ${frontend.repository.owner}/${frontend.repository.repo}`
+        );
+      }
+    }
+  }
+
+  // Parallelize with concurrency limit to avoid memory issues
+  // Limit concurrent operations: reasonable default is 5-10 depending on system resources
+  // Each operation can use up to 500k tokens, so too many concurrent = memory pressure
+  // Use input value, env var, or default to 5
+  const concurrencyLimit =
+    validatedInput.frontendFinderConcurrencyLimit ??
+    (process.env.FRONTEND_FINDER_CONCURRENCY_LIMIT
+      ? parseInt(process.env.FRONTEND_FINDER_CONCURRENCY_LIMIT, 10)
+      : 5);
+  const limit = pLimit(concurrencyLimit);
+
+  logger.info(
+    {
+      totalTasks: tasks.length,
+      concurrencyLimit,
+    },
+    `Processing ${tasks.length} frontend impact analysis tasks with concurrency limit of ${concurrencyLimit}`
+  );
+
+  // Execute all tasks in parallel with concurrency control
+  const results = await Promise.allSettled(
+    tasks.map(({ frontend, batch }) =>
+      limit(async () => {
+        logger.debug(
+          {
+            owner: frontend.repository.owner,
+            repo: frontend.repository.repo,
+            branch: frontend.repository.branch,
+            batchId: batch.batchId,
+            batchDescription: batch.description,
+            changeCount: batch.changes.length,
+          },
+          `Processing batch ${batch.batchId} for frontend ${frontend.repository.owner}/${frontend.repository.repo}: ${batch.description}`
+        );
+
+        const frontendImpactsResult = await findFrontendImpacts(
+          {
+            repository: frontend.repository,
+            codebasePath: frontend.codebasePath,
+            backendBatch: batch,
+            options: frontend.options,
+          },
+          validatedInput.openaiApiKey,
+          logLevel
+        );
+
+        return {
+          frontend,
+          batch,
+          impacts: frontendImpactsResult.frontendImpacts,
+        };
+      })
+    )
+  );
+
+  // Collect successful results and log errors
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const { frontend, batch } = tasks[i];
+
+    if (result.status === "fulfilled") {
+      allFrontendImpacts.push(...result.value.impacts);
+      logger.debug(
         {
           owner: frontend.repository.owner,
           repo: frontend.repository.repo,
-          branch: frontend.repository.branch,
+          batchId: batch.batchId,
+          impactCount: result.value.impacts.length,
         },
-        `Analyzing frontend ${frontend.repository.owner}/${frontend.repository.repo}`
+        `Successfully processed batch ${batch.batchId} for ${frontend.repository.owner}/${frontend.repository.repo}`
       );
-      const frontendImpactsResult = await findFrontendImpacts(
-        {
-          repository: frontend.repository,
-          codebasePath: frontend.codebasePath,
-          backendChanges: backendChangesResult,
-          options: frontend.options,
-        },
-        validatedInput.openaiApiKey,
-        logLevel
-      );
-
-      allFrontendImpacts.push(...frontendImpactsResult.frontendImpacts);
-    } catch (error) {
+    } else {
       logger.error(
         {
           owner: frontend.repository.owner,
           repo: frontend.repository.repo,
-          error: error instanceof Error ? error.message : String(error),
+          batchId: batch.batchId,
+          batchDescription: batch.description,
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
         },
-        `Failed to analyze frontend ${frontend.repository.owner}/${frontend.repository.repo}`
+        `Failed to analyze batch ${batch.batchId} for frontend ${frontend.repository.owner}/${frontend.repository.repo} - continuing with other tasks`
       );
-      // Continue with other frontends even if one fails
     }
   }
 
-  // Step 3: Group frontend impacts by backend change ID
-  const impactsByBackendChangeId = new Map<
+  // Step 3: Group frontend impacts by batch ID, then by change ID
+  // Map structure: batchId -> changeId -> impacts[]
+  const impactsByBatchAndChange = new Map<
     string,
-    z.infer<typeof backendChangeWithImpactsSchema>["frontendImpacts"]
+    Map<string, z.infer<typeof backendChangeWithImpactsSchema>["frontendImpacts"]>
   >();
 
   for (const impact of allFrontendImpacts) {
-    const existing = impactsByBackendChangeId.get(impact.backendChangeId) || [];
+    let batchMap = impactsByBatchAndChange.get(impact.backendBatchId);
+    if (!batchMap) {
+      batchMap = new Map();
+      impactsByBatchAndChange.set(impact.backendBatchId, batchMap);
+    }
+    const existing = batchMap.get(impact.backendChangeId) || [];
     existing.push(impact);
-    impactsByBackendChangeId.set(impact.backendChangeId, existing);
+    batchMap.set(impact.backendChangeId, existing);
   }
 
-  // Step 4: Combine backend changes with their frontend impacts
-  const changesWithImpacts = backendChangesResult.backendChanges.map(
-    (backendChange) => {
-      const frontendImpacts =
-        impactsByBackendChangeId.get(backendChange.id) || [];
+  // Step 4: Combine backend changes with their frontend impacts, grouped by batch
+  const batchesWithImpacts = backendChangesResult.batches.map((batch) => {
+    const batchMap = impactsByBatchAndChange.get(batch.batchId) || new Map();
+    const changesWithImpacts = batch.changes.map((backendChange) => {
+      const frontendImpacts = batchMap.get(backendChange.id) || [];
       return {
         ...backendChange,
         frontendImpacts,
       };
-    }
+    });
+    return {
+      ...batch,
+      changes: changesWithImpacts,
+    };
+  });
+
+  // Flatten for comment generator (which expects changes array)
+  const changesWithImpacts = batchesWithImpacts.flatMap(
+    (batch) => batch.changes
   );
 
   // Step 5: Generate PR comments
@@ -137,23 +233,16 @@ export async function runFarkAnalysis(
     `Starting Step 5: Generating PR comments for ${changesWithImpacts.length} backend changes with ${allFrontendImpacts.length} frontend impacts`
   );
 
-  // Get GitHub tools for comment generator (optional but may be used)
-  const { tools: githubTools } = await getBackendTools(
-    validatedInput.backend.githubMcp.beGithubToken,
-    validatedInput.backend.githubMcp.mcpServerUrl
-  );
-
   const prCommentsResult = await generatePRComments(
     {
       changes: changesWithImpacts,
       backend_owner: validatedInput.backend.repository.owner,
       backend_repo: validatedInput.backend.repository.repo,
       pull_number: validatedInput.backend.repository.pull_number,
+      options: validatedInput.commentGeneratorOptions,
     },
-    githubTools,
     validatedInput.openaiApiKey,
-    logLevel,
-    validatedInput.commentGeneratorOptions
+    logLevel
   );
 
   // Step 6: Post PR comments
@@ -173,11 +262,11 @@ export async function runFarkAnalysis(
       backend_owner: validatedInput.backend.repository.owner,
       backend_repo: validatedInput.backend.repository.repo,
       pull_number: validatedInput.backend.repository.pull_number,
+      githubMcp: validatedInput.backend.githubMcp,
+      options: validatedInput.prCommentPosterOptions,
     },
-    githubTools,
     validatedInput.openaiApiKey,
-    logLevel,
-    validatedInput.prCommentPosterOptions
+    logLevel
   );
 
   logger.info(

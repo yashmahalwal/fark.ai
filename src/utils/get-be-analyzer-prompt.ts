@@ -1,4 +1,4 @@
-import { BackendInput } from "../agents/be-analyzer";
+import { BackendInput } from "../schemas/be-analyzer-schema";
 
 /**
  * Generates the prompt for the BE Diff Analyzer agent
@@ -29,14 +29,20 @@ WORKFLOW (ADAPTIVE - NO FIXED ORDER):
 - DO NOT use any git operations - codebase is already available at the provided path.
 
 EFFICIENCY (CRITICAL FOR TOKEN PRESERVATION):
-- The diff often contains most information you need - rely on it first
-- When you need to read files: Use bash for file operations - search reveals file paths and line numbers, then read only the relevant sections
-- Example: grep -rn "pattern" . shows file:line:match - use the line numbers to read specific ranges (e.g., sed -n '100,200p' file) instead of reading entire files
-- DO NOT use ls, find, or directory listing unless absolutely necessary - diff and search already reveal file paths
-- Large files (e.g., 15K+ line GraphQL schemas): ALWAYS use bash to read specific sections, never readFile entire file
-- readFile is extremely expensive - use only for small files when bash section reading is not practical
-- Skip unrelated files (tests, docs, build configs)
-- Be targeted in your searches - don't traverse excessively
+- Prefer PR diff over filesystem:
+  - The diff often contains most information you need - rely on it first.
+  - Only drop down to the checked-out codebase when diff + PR metadata are not enough to understand the API-surface impact.
+- When you need to read files from the codebase:
+  - Use bash to search first (for example, recursive grep/rg) to reveal file paths and line numbers, then read only the relevant sections.
+  - Always keep reads bounded: use small line ranges (for example, sed -n '100,200p' file) or pagination (for example, head -n N); never stream whole large files.
+  - Avoid dependency/build/output/junk folders such as node_modules, .git, dist, build, coverage, out, etc. unless there is a very specific reason.
+  - Never use grep’s -I/--binary-files=without-match flags; they can silently hide matches in files the tool thinks are “binary”.
+- Discovery vs traversal:
+  - Use a minimal amount of ls/search output to understand layout and locate relevant code roots; do not walk the tree with ls/find.
+  - Skip unrelated files (tests, docs, build configs) unless they clearly participate in the public API.
+- Be targeted:
+  - Focus searches on API-surface files (routes/controllers, schemas, protos) rather than broad filesystem traversal.
+  - Avoid excessive or repeated searches; reuse information from earlier searches whenever possible.
 
 BREAKING CHANGE TYPES:
 
@@ -108,5 +114,17 @@ Logic:
 - Mixed (both "-" and "+" lines): startLine = first removed line (LEFT), endLine = last added line (RIGHT), startSide = "LEFT", endSide = "RIGHT"
 - Stick to diff lines (lines with "+" or "-" prefix) - startLine/endLine should be the exact changed lines
 
-If no breaking changes found, return empty backendChanges array.`;
+OUTPUT:
+- BATCHING:
+  - Group related changes together—the frontend finder needs coherent batches to analyze effectively
+  - Each batch's content must fit within context window (total content: diffHunks, descriptions, etc.)
+  - The frontend impact agent runs once per batch, so keep batch count low
+  - Batches are mutually exclusive—each change belongs to exactly one batch
+- batches: Array of batches, each containing:
+  - batchId: Unique identifier
+  - description: Brief description of the batch
+  - changes: Array of backend changes (each change.id must be unique across all batches)
+- All changes must be included in exactly one batch
+
+If no breaking changes found, return empty batches array.`;
 }

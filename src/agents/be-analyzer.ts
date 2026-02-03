@@ -6,6 +6,7 @@ import { createLogger, type LogLevel } from "../utils/create-logger";
 import {
   backendInputSchema,
   backendChangesSchema,
+  backendChangeItemSchema,
   type BackendInput,
   type BackendChangesOutput,
 } from "../schemas/be-analyzer-schema";
@@ -16,16 +17,6 @@ import {
   enforceLimits,
   trackTokenUsage,
 } from "../utils/limit-checks";
-
-// Re-export schemas for backward compatibility
-export {
-  backendRepoSchema,
-  backendInputSchema,
-  backendChangeItemSchema,
-  backendChangesSchema,
-  type BackendInput,
-  type BackendChangesOutput,
-} from "../schemas/be-analyzer-schema";
 
 /**
  * Agent 1: BE Diff Analyzer
@@ -83,7 +74,7 @@ export async function analyzeBackendDiff(
 
   // Create GitHub tools (for PR operations)
   const { tools: githubTools } = await getBackendTools(
-    githubMcp.beGithubToken,
+    githubMcp.token,
     githubMcp.mcpServerUrl
   );
 
@@ -121,14 +112,14 @@ export async function analyzeBackendDiff(
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
       toolsCount: Object.keys(allTools).length,
-      model: "gpt-5",
+      model: "gpt-5.2",
     },
     "Starting analysis with OpenAI"
   );
 
   // Active tools: GitHub tools for PR operations, filesystem tools for code reading
   const result = await generateText({
-    model: openaiClient("gpt-5"),
+    model: openaiClient("gpt-5.2"),
     output: outputSpec,
     tools: allTools,
     activeTools: ["pull_request_read", "readFile", "bash"] as Array<
@@ -222,22 +213,23 @@ export async function analyzeBackendDiff(
     throw new Error("Failed to generate structured output from the model");
   }
 
-  const changeCount = result.output.backendChanges.length;
-  const impactTypes = result.output.backendChanges.reduce(
-    (
-      acc: Record<string, number>,
-      change: BackendChangesOutput["backendChanges"][number]
-    ) => {
-      acc[change.impact] = (acc[change.impact] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>
+  // Calculate statistics from batches
+  const batchCount = result.output.batches.length;
+  const changeCount = result.output.batches.reduce(
+    (sum, batch) => sum + batch.changes.length,
+    0
   );
-  const filesAffected = new Set(
-    result.output.backendChanges.map(
-      (change: BackendChangesOutput["backendChanges"][number]) => change.file
-    )
-  ).size;
+  const impactTypes: Record<string, number> = {};
+  const filesAffectedSet = new Set<string>();
+
+  // Process each batch
+  for (const batch of result.output.batches) {
+    for (const change of batch.changes) {
+      impactTypes[change.impact] = (impactTypes[change.impact] || 0) + 1;
+      filesAffectedSet.add(change.file);
+    }
+  }
+  const filesAffected = filesAffectedSet.size;
 
   // Calculate final token usage
   const finalUsage = result.steps
@@ -247,6 +239,7 @@ export async function analyzeBackendDiff(
 
   logger.info(
     {
+      batchCount,
       changeCount,
       filesAffected,
       impactTypes,
@@ -258,28 +251,44 @@ export async function analyzeBackendDiff(
         totalTokens: finalTotalTokens,
       },
     },
-    `Analysis complete - found ${changeCount} breaking change${changeCount !== 1 ? "s" : ""} across ${filesAffected} file${filesAffected !== 1 ? "s" : ""}`
+    `Analysis complete - found ${changeCount} breaking change${changeCount !== 1 ? "s" : ""} across ${filesAffected} file${filesAffected !== 1 ? "s" : ""} in ${batchCount} batch${batchCount !== 1 ? "es" : ""}`
   );
 
-  // Log each breaking change once with full details
-  if (changeCount > 0) {
-    result.output.backendChanges.forEach((change) => {
+  // Log each batch with its changes
+  if (batchCount > 0) {
+    result.output.batches.forEach((batch) => {
+      // Log batch info first
       logger.debug(
         {
-          id: change.id,
-          impact: change.impact,
-          file: change.file,
-          diffHunksCount: change.diffHunks.length,
-          description: change.description,
-          diffHunks: change.diffHunks.map((hunk) => ({
-            startLine: hunk.startLine,
-            endLine: hunk.endLine,
-            startSide: hunk.startSide,
-            endSide: hunk.endSide,
-            changesCount: hunk.changes.length,
-          })),
+          batchId: batch.batchId,
+          description: batch.description,
+          changeCount: batch.changes.length,
         },
-        `Change ${change.id} - ${change.impact} in ${change.file}`
+        `Batch ${batch.batchId}: ${batch.description} (${batch.changes.length} change${batch.changes.length !== 1 ? "s" : ""})`
+      );
+
+      // Then log each change in this batch
+      batch.changes.forEach(
+        (change: z.infer<typeof backendChangeItemSchema>) => {
+          logger.debug(
+            {
+              batchId: batch.batchId,
+              id: change.id,
+              impact: change.impact,
+              file: change.file,
+              diffHunksCount: change.diffHunks.length,
+              description: change.description,
+              diffHunks: change.diffHunks.map((hunk) => ({
+                startLine: hunk.startLine,
+                endLine: hunk.endLine,
+                startSide: hunk.startSide,
+                endSide: hunk.endSide,
+                changesCount: hunk.changes.length,
+              })),
+            },
+            `Change ${change.id} - ${change.impact} in ${change.file} (batch ${batch.batchId})`
+          );
+        }
       );
     });
   }

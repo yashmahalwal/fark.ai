@@ -1,4 +1,5 @@
-import { CommentGeneratorInput } from "../agents/comment-generator";
+import { CommentGeneratorInput } from "../schemas/comment-generator-schema";
+
 
 /**
  * Generates the prompt for the PR Comment Generator agent
@@ -24,7 +25,7 @@ COMMENT FORMAT:
 
 **Frontend Impact:**
 - **[owner/repo]** (branch: branch): \`[file]\` - [How it breaks] (severity: \`[severity]\`) [for each frontend impact]
-- No frontend impacts detected [if frontendImpacts empty]
+- Skip the entire "Frontend Impact:" section if frontendImpacts array is empty - do not include "No frontend impacts detected" or any mention of frontend impacts
 
 Comment must contain proper markdown formatting for code, headings, lists and emphasis. Comments should be concise and to the point.
 
@@ -43,9 +44,10 @@ WORKFLOW:
 2. Generate comment body for each diffHunk:
    - COMMENT BODY STRUCTURE. Each comment must contain:
       1. **Comment content**: Explain the breaking change relevant to THIS specific diff hunk location
-      2. **Frontend impacts**: List all frontend repos and their impacts (if any)
+      2. **Frontend impacts**: List all frontend repos and their impacts ONLY if frontendImpacts array is not empty - if empty, skip this entire section
    - Explain the breaking change relevant to THIS specific diff hunk location
-   - Include ALL frontend impacts for this change (grouped by repo)
+   - Include ALL frontend impacts for this change (grouped by repo) ONLY if frontendImpacts array has items
+   - If frontendImpacts is empty, do NOT include the "Frontend Impact:" section at all - skip it entirely
    - Extract owner/repo and branch from frontendRepo string (format: "owner/repo:branch")
    - Format: **[owner/repo]** (branch: branch): \`[file]\` - [How it breaks] (severity: \`[severity]\`)
    - Example: If frontendRepo is "yashmahalwal/fark-frontend-demo:main", use "**yashmahalwal/fark-frontend-demo** (branch: main): \`src/api.ts\` - [description] (severity: \`high\`)
@@ -76,7 +78,7 @@ OUTPUT REQUIREMENTS:
   * endLine: Actual end line number from diffHunk.endLine (MUST be > 0, no file-level comments). For single-line comments, same as startLine.
   * startSide: Actual start side from diffHunk.startSide ("LEFT" or "RIGHT", REQUIRED)
   * endSide: Actual end side from diffHunk.endSide ("LEFT" or "RIGHT", REQUIRED)
-- Group frontend impacts by repo in the comment body
+- Group frontend impacts by repo in the comment body (only if frontendImpacts array is not empty - skip the section entirely if empty)
 - Extract owner/repo and branch from frontendRepo string (format: "owner/repo:branch", e.g., "yashmahalwal/fark-frontend-demo:main")
 - Format: **[owner/repo]** (branch: branch): [file] - [description] ([severity])
 - Example: "**yashmahalwal/fark-frontend-demo** (branch: main): src/api.ts - [description] (high)"

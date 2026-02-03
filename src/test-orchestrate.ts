@@ -29,7 +29,7 @@ const frontendConfigFromEnvSchema = z.object({
 
 const envSchema = z.object({
   BACKEND_GITHUB_TOKEN: z.string().min(1),
-  MCP_SERVER_URL: z.string().url(),
+  GITHUB_MCP_SERVER_URL: z.string().url(),
   BACKEND_OWNER: z.string().min(1),
   BACKEND_REPO: z.string().min(1),
   BACKEND_CODEBASE_PATH: z.string().min(1),
@@ -126,57 +126,57 @@ async function main() {
     // Build backend options from env
     const backendOptions =
       env.BE_ANALYZER_MAX_STEPS ||
-      env.BE_ANALYZER_MAX_OUTPUT_TOKENS ||
-      env.BE_ANALYZER_MAX_TOTAL_TOKENS
+        env.BE_ANALYZER_MAX_OUTPUT_TOKENS ||
+        env.BE_ANALYZER_MAX_TOTAL_TOKENS
         ? {
-            maxSteps: env.BE_ANALYZER_MAX_STEPS,
-            maxOutputTokens: env.BE_ANALYZER_MAX_OUTPUT_TOKENS,
-            maxTotalTokens: env.BE_ANALYZER_MAX_TOTAL_TOKENS,
-          }
+          maxSteps: env.BE_ANALYZER_MAX_STEPS,
+          maxOutputTokens: env.BE_ANALYZER_MAX_OUTPUT_TOKENS,
+          maxTotalTokens: env.BE_ANALYZER_MAX_TOTAL_TOKENS,
+        }
         : undefined;
 
     // Build frontend options from env (apply to all frontends)
     const frontendOptions =
       env.FRONTEND_FINDER_MAX_STEPS ||
-      env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS ||
-      env.FRONTEND_FINDER_MAX_TOTAL_TOKENS
+        env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS ||
+        env.FRONTEND_FINDER_MAX_TOTAL_TOKENS
         ? {
-            maxSteps: env.FRONTEND_FINDER_MAX_STEPS,
-            maxOutputTokens: env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS,
-            maxTotalTokens: env.FRONTEND_FINDER_MAX_TOTAL_TOKENS,
-          }
+          maxSteps: env.FRONTEND_FINDER_MAX_STEPS,
+          maxOutputTokens: env.FRONTEND_FINDER_MAX_OUTPUT_TOKENS,
+          maxTotalTokens: env.FRONTEND_FINDER_MAX_TOTAL_TOKENS,
+        }
         : undefined;
 
     // Apply frontend options to all frontends if provided
     const frontendsWithOptions = frontendOptions
       ? env.FRONTENDS.map((frontend) => ({
-          ...frontend,
-          options: frontend.options || frontendOptions,
-        }))
+        ...frontend,
+        options: frontend.options || frontendOptions,
+      }))
       : env.FRONTENDS;
 
     // Build comment generator options from env
     const commentGeneratorOptions =
       env.COMMENT_GENERATOR_MAX_STEPS ||
-      env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS ||
-      env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS
+        env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS ||
+        env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS
         ? {
-            maxSteps: env.COMMENT_GENERATOR_MAX_STEPS,
-            maxOutputTokens: env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS,
-            maxTotalTokens: env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS,
-          }
+          maxSteps: env.COMMENT_GENERATOR_MAX_STEPS,
+          maxOutputTokens: env.COMMENT_GENERATOR_MAX_OUTPUT_TOKENS,
+          maxTotalTokens: env.COMMENT_GENERATOR_MAX_TOTAL_TOKENS,
+        }
         : undefined;
 
     // Build PR comment poster options from env
     const prCommentPosterOptions =
       env.PR_COMMENT_POSTER_MAX_STEPS ||
-      env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS ||
-      env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS
+        env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS ||
+        env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS
         ? {
-            maxSteps: env.PR_COMMENT_POSTER_MAX_STEPS,
-            maxOutputTokens: env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS,
-            maxTotalTokens: env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS,
-          }
+          maxSteps: env.PR_COMMENT_POSTER_MAX_STEPS,
+          maxOutputTokens: env.PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS,
+          maxTotalTokens: env.PR_COMMENT_POSTER_MAX_TOTAL_TOKENS,
+        }
         : undefined;
 
     await runFarkAnalysis({
@@ -188,8 +188,8 @@ async function main() {
         },
         codebasePath: env.BACKEND_CODEBASE_PATH,
         githubMcp: {
-          beGithubToken: env.BACKEND_GITHUB_TOKEN,
-          mcpServerUrl: env.MCP_SERVER_URL,
+          token: env.BACKEND_GITHUB_TOKEN,
+          mcpServerUrl: env.GITHUB_MCP_SERVER_URL,
         },
         options: backendOptions,
       },

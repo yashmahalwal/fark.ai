@@ -1,4 +1,5 @@
-import { FrontendFinderInput } from "../agents/frontend-finder";
+import { FrontendFinderInput } from "../schemas/frontend-finder-schema";
+
 
 /**
  * Generates the prompt for the Frontend Impact Finder agent
@@ -6,48 +7,74 @@ import { FrontendFinderInput } from "../agents/frontend-finder";
  * @returns The complete prompt string for the finder
  */
 export function getFrontendFinderPrompt(input: FrontendFinderInput): string {
-  const { repository, backendChanges } = input;
+  const { repository, backendBatch, codebasePath } = input;
   const { owner, repo, branch } = repository;
 
-  return `Analyze the frontend codebase to identify ALL places where these backend API changes will BREAK the frontend code.
+  // Extract only essential information from backend changes (exclude large diffHunks)
+  const essentialChanges = backendBatch.changes.map((change) => ({
+    id: change.id,
+    file: change.file,
+    impact: change.impact,
+    description: change.description,
+  }));
 
-The codebase is already available at the provided path - start searching immediately. Repository info (${owner}/${repo}, branch: ${branch}). It is ONLY used for output formatting in frontendRepo field.
+  return `Analyze the frontend codebase to identify where these backend API changes will BREAK the frontend code.
 
+Codebase path: ${codebasePath}
+Backend API changes batch: ${backendBatch.description}
 Backend API changes to analyze:
-${JSON.stringify(backendChanges.backendChanges)}
+${JSON.stringify(essentialChanges)}
 
 CONSTRAINTS:
 - Only report impacts where the backend change will ACTUALLY BREAK the frontend code
+- The codebase is checked out at ${codebasePath}; cwd is already that directory. Use RELATIVE paths only (e.g. "." or a discovered source folder) in bash and readFile.
 
 TOOLS:
-- bash: Use ONLY for searching (grep etc) and reading file sections (sed, head, tail, awk etc). Can be used for explore file strucutre only if nothing else works.
-- readFile: Use ONLY as last resort when bash cannot provide the needed information
+- bash: cwd = codebase root. Prefer relative paths
+- readFile: Use ONLY as last resort. Pass path relative to codebase root (e.g. path/to/file.ext).
 
-CRITICAL - DO NOT:
-- DO NOT traverse directories - search directly for API elements. DO NOT use ls, find, or any directory listing commands unless absolutely necessary. Rely on search for file paths and sections.
-- DO NOT use any git operations, codebase is already available at the provided path.
+BASH COMMANDS (intent, not recipes):
+- Paths:
+  - Start from "." (repo root). After you know where the real source code lives (from a minimal amount of ls/grep), prefer searching those source directories instead of the entire tree.
+  - Avoid dependency, build/output folders (e.g. node_modules, .git, dist, build, coverage, out, etc.) and other junk folders. Focus on source code.
+- Searching:
+  - Use recursive grep or ripgrep (rg) to search for relevant identifiers from the backend changes.
+  - Never use grep’s -I/--binary-files=without-match flags; they can silently hide matches in files the tool thinks are “binary”.
+  - Keep output small by using small context and pagination; do not try to dump the whole codebase.
+- Other commands:
+  - Use sed or similar only to read small, specific ranges around matches; do not read huge file ranges.
+  - For any bash command that can stream a lot of text (grep, cat, find without predicates, etc.), always apply some limit/pagination (e.g. head -n N) so you never flood the context window.
+  - Avoid complex shell tricks; simple, robust commands are preferred.
 
-WORKFLOW:
-1. Extract ALL API elements from ALL backend changes (exact endpoint paths, query names, mutation names, field names, type names)
-2. For EACH backend change, search for its EXACT API elements (not just generic terms like "graphql" or "Address")
-3. When search finds matches, you MUST read the file sections to verify if the usage will break
-4. Search for exact field names, endpoint paths, query/mutation names - be specific, not generic
-5. Continue searching until you have checked ALL backend changes - do not stop early
-
-EFFICIENCY:
-- Search for EXACT API elements from backend changes (exact field names, endpoint paths, query names) - NOT generic terms
-- When grep finds matches, you MUST read the file sections to verify breaking usage - don't assume from search results alone
-- Get code context efficiently: Use grep with context flags (grep -C 10 "pattern" file) to get code around matches instead of reading large line ranges
-- Only read specific line ranges when you need more context than grep -C provides - keep ranges small (50-100 lines max)
-- DO NOT use "head -n" to limit grep results - it may hide important matches. If results are too long, search more specifically instead
-- Large files (e.g., 15K+ line GraphQL schemas): ALWAYS use grep with context or read small specific sections, never readFile entire file or large ranges
-- Do not repeat searches - if you already searched for a term, don't search again with different flags or patterns
-- readFile is extremely expensive - when bash cannot provide the needed information. Should only be used for small files.
+WORKFLOW AND RULES (high level):
+- First, build a focused search plan:
+  - Read and understand ALL backend change descriptions in this batch before running any tools.
+  - Decide which concrete identifiers to search for (field names, endpoint paths, operation/query names).
+  - Deduplicate so each identifier is searched once and reused across all related changes.
+- Search real source code, not junk:
+  - Run recursive searches from "." (and, if clearly helpful, a small number of obvious source roots).
+  - Avoid dependency/build/output folders such as node_modules, .git, dist, build, coverage, out, etc.
+- Keep searches small and informative:
+  - Use grep (or equivalent) with small context and pagination so you can see how an identifier is used without dumping whole files or the entire tree.
+  - Only drill deeper (more context or additional reads) when a usage actually looks like it could BREAK the frontend.
+- Use ls only to choose where to search:
+  - Run ls rarely, only when it helps you understand the top-level layout or pick good roots to search.
+  - Do not walk the tree with repeated ls/cd/find; rely on grep results and filenames to guide you.
+- Avoid low-signal searches:
+  - Do not search extremely generic terms or loose subfields alone that will match everywhere; prefer specific identifiers tied directly to the backend changes.
+- Avoid repeating the same work:
+  - Keep track (in your reasoning) of which identifiers, paths, and files you’ve already searched/read.
+  - Do not re-run essentially the same grep/rg/sed/ls/find commands with only minor variations if they target the same identifier and scope; reuse prior results instead.
+- Report impacts, not every match:
+  - For each confirmed breaking usage, link it back to the specific backend change(s) it depends on.
+  - You do not need to enumerate every occurrence once you have demonstrated the breaking pattern.
 
 OUTPUT:
-- frontendImpacts array with: backendChangeId, frontendRepo, file, apiElement, description (high-level summary), severity
+- frontendImpacts array with: backendBatchId, backendChangeId, frontendRepo, file, apiElement, description (high-level summary), severity
+- backendBatchId: MUST be "${backendBatch.batchId}" (the batch ID from the input)
+- backendChangeId: MUST match the change.id from the backend changes being analyzed
 - frontendRepo: MUST be a string in format "owner/repo:branch" (e.g., "${owner}/${repo}:${branch}"). This is REQUIRED for each impact - use the repository information provided.
 - Focus on confirming that breaking impacts exist, not exhaustive enumeration
-- CRITICAL: You MUST search for ALL backend changes before reporting results. Do not stop after checking only a few changes.
-- Return empty array ONLY if you have searched for ALL backend changes and found no breaking impacts`;
+- CRITICAL: You MUST search for ALL changes in THIS batch before reporting results. Do not stop after checking only a few changes.  Do not report "no matches" if the command might have been wrong (e.g. brace expansion in --include) or you are unsure.
+- Return empty array ONLY if you have searched for ALL changes in THIS batch and found no breaking impacts`;
 }
