@@ -12,6 +12,7 @@ import {
 } from "../schemas/be-analyzer-schema";
 import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
 import { getBackendTools } from "../tools/github-tools";
+import { BE_ANALYZER_DEFAULTS } from "../constants/agent-token-defaults";
 import {
   calculateLimits,
   enforceLimits,
@@ -101,9 +102,11 @@ export async function analyzeBackendDiff(
 
   // Calculate limits from options with defaults
   const limits = calculateLimits({
-    maxSteps: options?.maxSteps || 20,
-    maxOutputTokens: options?.maxOutputTokens || 50000,
-    maxTotalTokens: options?.maxTotalTokens || 200000,
+    maxSteps: options?.maxSteps ?? BE_ANALYZER_DEFAULTS.maxSteps,
+    maxOutputTokens:
+      options?.maxOutputTokens ?? BE_ANALYZER_DEFAULTS.maxOutputTokens,
+    maxTotalTokens:
+      options?.maxTotalTokens ?? BE_ANALYZER_DEFAULTS.maxTotalTokens,
   });
 
   logger.info(
@@ -135,13 +138,10 @@ export async function analyzeBackendDiff(
         messages,
         config: {
           limits,
-          onTokenWarning: (params) => {
-            logger.warn(params, "Approaching total token limit");
-          },
           onTokenForce: (params) => {
             logger.warn(
               params,
-              "Approaching token limit, forcing output generation"
+              "Past 85% token budget — wrap-up nudge (tools still allowed)"
             );
           },
           onStepForce: (params) => {
@@ -153,8 +153,8 @@ export async function analyzeBackendDiff(
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
           },
-          tokenForceMessage: () =>
-            `CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all breaking changes found so far.`,
+          tokenForceMessage: (percentage) =>
+            `You are at about ${percentage}% of the token budget. Wrap up essential searches and consolidate results; prepare to return your final JSON with all breaking changes found so far. You may still use tools until the hard budget cap.`,
           stepForceMessage: () =>
             "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
         },

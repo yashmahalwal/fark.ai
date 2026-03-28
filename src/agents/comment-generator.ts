@@ -2,6 +2,7 @@ import { generateText, Output, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { getCommentGeneratorPrompt } from "../utils/get-comment-generator-prompt";
 import { createLogger, type LogLevel } from "../utils/create-logger";
+import { COMMENT_GENERATOR_DEFAULTS } from "../constants/agent-token-defaults";
 import {
   calculateLimits,
   enforceLimits,
@@ -24,7 +25,6 @@ export async function generatePRComments(
   logLevel: LogLevel = "info"
 ): Promise<PRCommentsOutput> {
   const logger = createLogger(logLevel, "Comment Generator");
-  // Validate inputs using Zod
   const validatedInput = commentGeneratorInputSchema.parse(input);
 
   if (
@@ -64,11 +64,12 @@ export async function generatePRComments(
     schema: prCommentsSchema,
   });
 
-  // Calculate limits from options with defaults
   const limits = calculateLimits({
-    maxSteps: options?.maxSteps || 15, // Comment generation is simpler, fewer steps needed
-    maxOutputTokens: options?.maxOutputTokens || 30000, // Lower than other agents since comments are shorter
-    maxTotalTokens: options?.maxTotalTokens || 100000, // Lower limit for comment generation
+    maxSteps: options?.maxSteps ?? COMMENT_GENERATOR_DEFAULTS.maxSteps,
+    maxOutputTokens:
+      options?.maxOutputTokens ?? COMMENT_GENERATOR_DEFAULTS.maxOutputTokens,
+    maxTotalTokens:
+      options?.maxTotalTokens ?? COMMENT_GENERATOR_DEFAULTS.maxTotalTokens,
   });
 
   logger.info(
@@ -94,13 +95,10 @@ export async function generatePRComments(
         messages,
         config: {
           limits,
-          onTokenWarning: (params) => {
-            logger.warn(params, "Approaching total token limit");
-          },
           onTokenForce: (params) => {
             logger.warn(
               params,
-              "Approaching token limit, forcing output generation"
+              "Past 85% token budget — wrap-up nudge (tools still allowed)"
             );
           },
           onStepForce: (params) => {
@@ -112,15 +110,14 @@ export async function generatePRComments(
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
           },
-          tokenForceMessage: () =>
-            "CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately with all comments found so far.",
+          tokenForceMessage: (percentage) =>
+            `You are at about ${percentage}% of the token budget. Wrap up and prepare your final JSON (all comments for every diff hunk). You may still use tools until the hard budget cap.`,
           stepForceMessage: () =>
             "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete analysis results immediately.",
         },
       });
     },
     onStepFinish: ({ toolCalls, usage }) => {
-      // Log tool calls with details
       if (toolCalls && toolCalls.length > 0) {
         toolCalls.forEach((tc) => {
           if (
@@ -146,7 +143,6 @@ export async function generatePRComments(
         });
       }
 
-      // Log token usage
       if (usage) {
         logger.debug(
           {
@@ -171,7 +167,8 @@ export async function generatePRComments(
     throw new Error("Failed to generate structured output from the model");
   }
 
-  // Calculate final token usage
+  const output = result.output as PRCommentsOutput;
+
   const finalUsage = result.steps
     ? trackTokenUsage(result.steps)
     : { totalInputTokens: 0, totalOutputTokens: 0, currentTotalTokens: 0 };
@@ -179,7 +176,7 @@ export async function generatePRComments(
 
   logger.info(
     {
-      commentCount: result.output.comments.length,
+      commentCount: output.comments.length,
       totalSteps: result.steps?.length || 0,
       finishReason: result.finishReason || undefined,
       tokenUsage: {
@@ -188,23 +185,21 @@ export async function generatePRComments(
         totalTokens: finalTotalTokens,
       },
     },
-    `Generation complete, created ${result.output.comments.length} comments`
+    `Generation complete, created ${output.comments.length} comments`
   );
 
-  // Log summary at info level (important output)
   logger.info(
     {
       summary:
-        result.output.summary.substring(0, 200) +
-        (result.output.summary.length > 200 ? "..." : ""),
-      summaryLength: result.output.summary.length,
+        output.summary.substring(0, 200) +
+        (output.summary.length > 200 ? "..." : ""),
+      summaryLength: output.summary.length,
     },
     "Generated summary"
   );
 
-  // Log each comment once with full details
-  if (result.output.comments.length > 0) {
-    result.output.comments.forEach((comment, index) => {
+  if (output.comments.length > 0) {
+    output.comments.forEach((comment, index) => {
       logger.debug(
         {
           index: index + 1,
@@ -226,5 +221,5 @@ export async function generatePRComments(
     logger.warn("No comments generated - comments array is empty");
   }
 
-  return result.output as PRCommentsOutput;
+  return output;
 }

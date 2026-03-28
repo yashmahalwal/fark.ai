@@ -10,6 +10,7 @@ import {
   type FrontendImpactsOutput,
 } from "../schemas/frontend-finder-schema";
 import { getReadonlyFilesystemTools } from "../tools/filesystem-tools";
+import { FRONTEND_FINDER_DEFAULTS } from "../constants/agent-token-defaults";
 import {
   calculateLimits,
   enforceLimits,
@@ -100,9 +101,11 @@ export async function findFrontendImpacts(
 
   // Calculate limits from options with defaults
   const limits = calculateLimits({
-    maxSteps: options?.maxSteps || 40,
-    maxOutputTokens: options?.maxOutputTokens || 50000,
-    maxTotalTokens: options?.maxTotalTokens || 500000,
+    maxSteps: options?.maxSteps ?? FRONTEND_FINDER_DEFAULTS.maxSteps,
+    maxOutputTokens:
+      options?.maxOutputTokens ?? FRONTEND_FINDER_DEFAULTS.maxOutputTokens,
+    maxTotalTokens:
+      options?.maxTotalTokens ?? FRONTEND_FINDER_DEFAULTS.maxTotalTokens,
   });
 
   logger.info(
@@ -130,13 +133,10 @@ export async function findFrontendImpacts(
         messages,
         config: {
           limits,
-          onTokenWarning: (params) => {
-            logger.warn(params, "Approaching total token limit");
-          },
           onTokenForce: (params) => {
             logger.warn(
               params,
-              "Approaching token limit, forcing output generation"
+              "Past 85% token budget — wrap-up nudge (tools still allowed)"
             );
           },
           onStepForce: (params) => {
@@ -148,8 +148,8 @@ export async function findFrontendImpacts(
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
           },
-          tokenForceMessage: () =>
-            "CRITICAL: You are approaching the token limit (85%). You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
+          tokenForceMessage: (percentage) =>
+            `You are at about ${percentage}% of the token budget. Finish checking this batch and prepare your final JSON with all impacts found so far. You may still use tools until the hard budget cap.`,
           stepForceMessage: () =>
             "IMPORTANT: You are approaching the step limit. You MUST now generate your final output as JSON matching the schema with ALL impacts found so far. Include all impacts you've discovered from your searches. Do not call any more tools.",
         },

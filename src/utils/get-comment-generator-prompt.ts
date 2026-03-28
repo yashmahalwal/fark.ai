@@ -11,12 +11,22 @@ export function getCommentGeneratorPrompt(
 ): string {
   const { changes, backend_owner, backend_repo, pull_number } = input;
 
+  const totalHunks = changes.reduce((n, c) => n + c.diffHunks.length, 0);
+
   return `Generate inline PR comments for breaking API changes in PR #${pull_number} (${backend_owner}/${backend_repo}).
 
 Backend Changes:
 ${JSON.stringify(changes, null, 2)}
 
 Generate comments for ALL changes in the 'changes' array.
+
+Exact count and order: Add up every \`diffHunks.length\` in the JSON above — the total is **${totalHunks}**. Your \`comments\` array MUST have exactly that many entries, in this order: for each change in array order, for each of its \`diffHunks\` in array order, append one comment object (then the next change, etc.). Never merge hunks.
+
+PER HUNK:
+- One GitHub inline comment per \`diffHunk\` — every hunk gets its own anchor. Do **not** merge several hunks into one comment because the story sounds the same.
+- \`comments\` array length MUST be **${totalHunks}** (sum of all \`diffHunks.length\`).
+- For multiple hunks under the same \`change\`, repeat the **full** \`frontendImpacts\` list on **each** of those comments (redundant on purpose so every thread is self-contained).
+- If **${totalHunks}** is 0, return \`comments: []\` and still provide \`summary\` (brief note that no diff hunks were supplied or equivalent).
 
 COMMENT FORMAT:
 ⚠️ **Breaking API Change**
@@ -30,9 +40,9 @@ COMMENT FORMAT:
 Comment must contain proper markdown formatting for code, headings, lists and emphasis. Comments should be concise and to the point.
 
 WORKFLOW:
-1. For EACH change, iterate through ALL diffHunks:
-   - Generate ONE comment per diffHunk (if a change has 3 diffHunks, generate 3 comments relevant to the respective diff hunk)
-   - For each diffHunk in change.diffHunks:
+1. For EACH change, iterate through ALL \`change.diffHunks\` in order:
+   - One GitHub comment per hunk (PER HUNK); e.g. 3 hunks ⇒ 3 comments, each scoped to that hunk only.
+   - For each \`diffHunk\` in \`change.diffHunks\`:
      * path: change.file (repo-relative file path) - REQUIRED
      * startLine: diffHunk.startLine - Use the startLine from this diffHunk (line number in diff blob). For single-line comments, set both startLine and endLine to the same line number.
      * endLine: diffHunk.endLine - Use the endLine from this diffHunk (line number in diff blob). For single-line comments, set both startLine and endLine to the same line number.
@@ -46,7 +56,7 @@ WORKFLOW:
       1. **Comment content**: Explain the breaking change relevant to THIS specific diff hunk location
       2. **Frontend impacts**: List all frontend repos and their impacts ONLY if frontendImpacts array is not empty - if empty, skip this entire section
    - Explain the breaking change relevant to THIS specific diff hunk location
-   - Include ALL frontend impacts for this change (grouped by repo) ONLY if frontendImpacts array has items
+   - Include ALL frontend impacts for this change (grouped by repo) ONLY if frontendImpacts array has items — list the **complete** set on **every** hunk comment for this change (same list each time)
    - If frontendImpacts is empty, do NOT include the "Frontend Impact:" section at all - skip it entirely
    - Extract owner/repo and branch from frontendRepo string (format: "owner/repo:branch")
    - Format: **[owner/repo]** (branch: branch): \`[file]\` - [How it breaks] (severity: \`[severity]\`)
@@ -60,8 +70,7 @@ WORKFLOW:
 
 4. Return output:
    - summary: Markdown summary text (REQUIRED)
-   - comments: Array of comment objects (REQUIRED)
-   - Generate ONE comment per diffHunk (if change has multiple diffHunks, generate multiple comments)
+   - comments: Array of comment objects (REQUIRED), length **${totalHunks}** (see PER HUNK; if zero hunks, empty array)
    - Each comment object MUST include ALL fields: path, startLine, endLine, startSide, endSide, body
    - ALL line numbers MUST be positive integers (no 0 values):
      * startLine: Actual start line number from diffHunk.startLine (REQUIRED, must be > 0)
@@ -70,9 +79,8 @@ WORKFLOW:
      * endSide: Actual end side from diffHunk.endSide ("LEFT" or "RIGHT", REQUIRED)
 
 OUTPUT REQUIREMENTS:
-- Generate comments for ALL changes in the 'changes' array
-- Generate ONE comment for EACH diffHunk in each change (if change has 3 diffHunks, generate 3 comments)
-- Summary text: Do not include the count of comments/changes in the summary body (this applies ONLY to summary formatting - you must still generate ALL comments for ALL changes)
+- Same coverage as PER HUNK and steps 1–2: every \`diffHunk\` across all changes gets one comment; \`comments\` length **${totalHunks}**; no theme-level merging.
+- Summary text: Do not include the count of comments/changes in the summary body (this applies ONLY to summary formatting — you must still generate ALL comments for ALL changes when **${totalHunks}** > 0).
 - ALL fields are REQUIRED:
   * startLine: Actual start line number from diffHunk.startLine (MUST be > 0, no file-level comments)
   * endLine: Actual end line number from diffHunk.endLine (MUST be > 0, no file-level comments). For single-line comments, same as startLine.

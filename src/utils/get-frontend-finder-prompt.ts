@@ -63,18 +63,18 @@ WORKFLOW AND RULES (high level):
 - Avoid low-signal searches:
   - Do not search extremely generic terms or loose subfields alone that will match everywhere; prefer specific identifiers tied directly to the backend changes.
 - Avoid repeating the same work:
-  - Keep track (in your reasoning) of which identifiers, paths, and files you’ve already searched/read.
+  - Use what prior tool results in this turn already showed: which identifiers, paths, and files were searched or read, and reuse that evidence instead of repeating the same probe.
   - Do not re-run essentially the same grep/rg/sed/ls/find commands with only minor variations if they target the same identifier and scope; reuse prior results instead.
 - Report impacts, not every match:
   - For each confirmed breaking usage, link it back to the specific backend change(s) it depends on.
-  - You do not need to enumerate every occurrence once you have demonstrated the breaking pattern.
+  - You do not need to enumerate every occurrence once you have demonstrated the breaking pattern; exhaustive listing of duplicate hits is not required.
 
 OUTPUT:
 - frontendImpacts array with: backendBatchId, backendChangeId, frontendRepo, file, apiElement, description (high-level summary), severity
 - backendBatchId: MUST be "${backendBatch.batchId}" (the batch ID from the input)
 - backendChangeId: MUST match the change.id from the backend changes being analyzed
 - frontendRepo: MUST be a string in format "owner/repo:branch" (e.g., "${owner}/${repo}:${branch}"). This is REQUIRED for each impact - use the repository information provided.
-- Focus on confirming that breaking impacts exist, not exhaustive enumeration
-- CRITICAL: You MUST search for ALL changes in THIS batch before reporting results. Do not stop after checking only a few changes.  Do not report "no matches" if the command might have been wrong (e.g. brace expansion in --include) or you are unsure.
+- Focus on confirming that breaking impacts exist, not exhaustive enumeration of every grep hit
+- CRITICAL: You MUST consider and search for every backend change id in THIS batch before reporting results (that obligation is separate from listing every duplicate match). Do not stop after checking only a few changes. Do not report "no matches" if the command might have been wrong (e.g. brace expansion in --include) or you are unsure.
 - Return empty array ONLY if you have searched for ALL changes in THIS batch and found no breaking impacts`;
 }

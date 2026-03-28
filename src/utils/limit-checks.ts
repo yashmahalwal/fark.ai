@@ -17,7 +17,8 @@ export interface CalculatedLimits {
   FORCE_OUTPUT_AT_STEP: number;
   MAX_OUTPUT_TOKENS: number;
   MAX_TOTAL_TOKENS: number;
-  FORCE_OUTPUT_AT_TOKENS: number;
+  /** 85% of max — inject wrap-up nudge; tools stay enabled */
+  WRAPUP_WARN_AT_TOKENS: number;
 }
 
 /**
@@ -35,22 +36,7 @@ export interface TokenUsage {
 export interface LimitCheckHandlerConfig {
   limits: CalculatedLimits;
   /**
-   * Optional: Callback when approaching token limit (80%)
-   */
-  onTokenWarning?: (params: {
-    stepNumber: number;
-    currentTotalTokens: number;
-    maxTotalTokens: number;
-    inputTokens: number;
-    outputTokens: number;
-    percentage: number;
-  }) => void;
-  /**
-   * Optional: Custom warning message when approaching token limit (80%)
-   */
-  tokenWarningMessage?: (percentage: number) => ModelMessage | null;
-  /**
-   * Optional: Callback when forcing output due to token limit (85%)
+   * Optional: Callback at 85% — wrap-up warning (tools still on)
    */
   onTokenForce?: (params: {
     stepNumber: number;
@@ -81,7 +67,7 @@ export interface LimitCheckHandlerConfig {
     outputTokens: number;
   }) => void;
   /**
-   * Optional: Custom force output message when approaching token limit (85%)
+   * Optional: Custom wrap-up message at ≥85% (before 100%); tools remain enabled
    */
   tokenForceMessage?: (percentage: number) => string;
   /**
@@ -98,14 +84,14 @@ export function calculateLimits(options: LimitOptions): CalculatedLimits {
   const FORCE_OUTPUT_AT_STEP = Math.max(1, MAX_STEPS - 2);
   const MAX_OUTPUT_TOKENS = options.maxOutputTokens;
   const MAX_TOTAL_TOKENS = options.maxTotalTokens;
-  const FORCE_OUTPUT_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85;
+  const WRAPUP_WARN_AT_TOKENS = MAX_TOTAL_TOKENS * 0.85;
 
   return {
     MAX_STEPS,
     FORCE_OUTPUT_AT_STEP,
     MAX_OUTPUT_TOKENS,
     MAX_TOTAL_TOKENS,
-    FORCE_OUTPUT_AT_TOKENS,
+    WRAPUP_WARN_AT_TOKENS,
   };
 }
 
@@ -168,8 +154,6 @@ export async function enforceLimits<TOOLS extends ToolSet>(params: {
   const { stepNumber, steps, messages, config } = params;
   const {
     limits,
-    onTokenWarning,
-    tokenWarningMessage,
     onTokenForce,
     onStepForce,
     onTokenLimitExceeded,
@@ -182,80 +166,15 @@ export async function enforceLimits<TOOLS extends ToolSet>(params: {
     MAX_STEPS,
     FORCE_OUTPUT_AT_STEP,
     MAX_TOTAL_TOKENS,
-    FORCE_OUTPUT_AT_TOKENS,
+    WRAPUP_WARN_AT_TOKENS,
   } = limits;
 
-  // Warn if approaching token limits (80% to 85% only - don't warn after we've passed 85%)
-  if (
-    currentTotalTokens > MAX_TOTAL_TOKENS * 0.8 &&
-    currentTotalTokens < FORCE_OUTPUT_AT_TOKENS
-  ) {
-    const percentage = Math.round(
-      (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-    );
-    onTokenWarning?.({
-      stepNumber,
-      currentTotalTokens,
-      maxTotalTokens: MAX_TOTAL_TOKENS,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      percentage,
-    });
-
-    // Add custom warning message if provided
-    if (tokenWarningMessage) {
-      const warningMsg = tokenWarningMessage(percentage);
-      if (warningMsg) {
-        return {
-          messages: [...messages, warningMsg],
-        };
-      }
-    }
-  }
-
-  // Force output generation when approaching token limit (85%)
-  if (currentTotalTokens >= FORCE_OUTPUT_AT_TOKENS) {
-    const toolCallsCount = countToolCalls(steps);
-    const percentage = Math.round(
-      (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
-    );
-
-    onTokenForce?.({
-      stepNumber,
-      currentTotalTokens,
-      maxTotalTokens: MAX_TOTAL_TOKENS,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      percentage,
-      toolCallsCount,
-    });
-
-    const hasOutputResult = hasOutput(steps);
-
-    // Always force output at 85% if we don't have it yet
-    if (!hasOutputResult) {
-      const reminderMessage: ModelMessage = {
-        role: "user",
-        content:
-          tokenForceMessage?.(percentage) ||
-          `CRITICAL: You are approaching the token limit. You MUST now generate your final output as JSON matching the schema. Do not call any more tools. Return the complete results immediately.`,
-      };
-
-      return {
-        toolChoice: "none",
-        messages: [...messages, reminderMessage],
-      };
-    }
-  }
-
-  // If token limit exceeded, force output generation (don't throw - let model finish)
-  // But throw if we exceed 150% to prevent runaway costs
+  // --- ≥100%: kill tools; repeat stop reminder each step until output; ≥125%: throw ---
   if (currentTotalTokens >= MAX_TOTAL_TOKENS) {
     const percentage = Math.round(
       (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
     );
 
-    // Hard stop at 125% to prevent runaway costs
     if (percentage >= 125) {
       onTokenLimitExceeded?.({
         stepNumber,
@@ -277,23 +196,41 @@ export async function enforceLimits<TOOLS extends ToolSet>(params: {
       outputTokens: totalOutputTokens,
     });
 
-    // Check if we already have output
-    const hasOutputResult = hasOutput(steps);
+    const reminderMessage: ModelMessage = {
+      role: "user",
+      content: `CRITICAL: Token budget exceeded (${percentage}% of limit). You MUST NOT call any more tools. Stop immediately and return your final output as JSON matching the schema with everything you have so far.`,
+    };
 
-    // Force output if we don't have it yet
-    if (!hasOutputResult) {
-      const reminderMessage: ModelMessage = {
-        role: "user",
-        content:
-          tokenForceMessage?.(percentage) ||
-          `CRITICAL: Token limit exceeded. You MUST immediately generate your final output as JSON matching the schema with all results found so far. Do not call any more tools.`,
-      };
+    return {
+      toolChoice: "none",
+      messages: [...messages, reminderMessage],
+    };
+  }
 
-      return {
-        toolChoice: "none",
-        messages: [...messages, reminderMessage],
-      };
-    }
+  // --- ≥85% and <100%: ask to wrap up; tools stay on ---
+  if (currentTotalTokens >= WRAPUP_WARN_AT_TOKENS) {
+    const toolCallsCount = countToolCalls(steps);
+    const percentage = Math.round(
+      (currentTotalTokens / MAX_TOTAL_TOKENS) * 100
+    );
+
+    onTokenForce?.({
+      stepNumber,
+      currentTotalTokens,
+      maxTotalTokens: MAX_TOTAL_TOKENS,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      percentage,
+      toolCallsCount,
+    });
+
+    const wrapUpContent =
+      tokenForceMessage?.(percentage) ||
+      `You are at about ${percentage}% of the token budget for this run. Wrap up essential work soon and be ready to return your final structured output. You may still use tools if needed, but prioritize finishing.`;
+
+    return {
+      messages: [...messages, { role: "user", content: wrapUpContent }],
+    };
   }
 
   // When approaching step limit, force the model to generate output

@@ -62,46 +62,46 @@ inputs:
   # Optional: Agent token limits (for larger PRs)
   # BE Analyzer limits
   be_analyzer_max_steps:
-    description: "Maximum steps for BE Analyzer (default: 20)"
+    description: "Maximum steps for BE Analyzer (default: 15)"
     required: false
   be_analyzer_max_output_tokens:
-    description: "Maximum output tokens for BE Analyzer (default: 50000)"
+    description: "Maximum output tokens for BE Analyzer (default: 16384)"
     required: false
   be_analyzer_max_total_tokens:
-    description: "Maximum total tokens for BE Analyzer (default: 200000)"
+    description: "Maximum total tokens for BE Analyzer (default: 100000)"
     required: false
 
   # Frontend Finder limits
   frontend_finder_max_steps:
-    description: "Maximum steps for Frontend Finder (default: 40)"
+    description: "Maximum steps for Frontend Finder (default: 22)"
     required: false
   frontend_finder_max_output_tokens:
-    description: "Maximum output tokens for Frontend Finder (default: 50000)"
+    description: "Maximum output tokens for Frontend Finder (default: 16384)"
     required: false
   frontend_finder_max_total_tokens:
-    description: "Maximum total tokens for Frontend Finder (default: 500000)"
+    description: "Maximum total tokens for Frontend Finder (default: 150000)"
     required: false
 
   # Comment Generator limits
   comment_generator_max_steps:
-    description: "Maximum steps for Comment Generator (default: 15)"
+    description: "Maximum steps for Comment Generator (default: 12)"
     required: false
   comment_generator_max_output_tokens:
-    description: "Maximum output tokens for Comment Generator (default: 30000)"
+    description: "Maximum output tokens for Comment Generator (default: 8192)"
     required: false
   comment_generator_max_total_tokens:
-    description: "Maximum total tokens for Comment Generator (default: 100000)"
+    description: "Maximum total tokens for Comment Generator (default: 48000)"
     required: false
 
   # PR Comment Poster limits
   pr_comment_poster_max_steps:
-    description: "Maximum steps for PR Comment Poster (default: 60)"
+    description: "Maximum steps for PR Comment Poster (default: 45)"
     required: false
   pr_comment_poster_max_output_tokens:
-    description: "Maximum output tokens for PR Comment Poster (default: 5000)"
+    description: "Maximum output tokens for PR Comment Poster (default: 8192)"
     required: false
   pr_comment_poster_max_total_tokens:
-    description: "Maximum total tokens for PR Comment Poster (default: 300000)"
+    description: "Maximum total tokens for PR Comment Poster (default: 150000)"
     required: false
 
 outputs:

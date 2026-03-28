@@ -2,6 +2,7 @@ import { generateText, Output, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { getPRCommentPosterPrompt } from "../utils/get-pr-comment-poster-prompt";
 import { createLogger, type LogLevel } from "../utils/create-logger";
+import { PR_COMMENT_POSTER_DEFAULTS } from "../constants/agent-token-defaults";
 import {
   calculateLimits,
   enforceLimits,
@@ -132,12 +133,12 @@ export async function postPRComments(
     }
   }
 
-  // Calculate limits from options with defaults
-  // Each comment addition is a step, so we need enough steps for: PR read, review check, create review, add comments (one per comment), submit review
   const limits = calculateLimits({
-    maxSteps: options?.maxSteps || 60, // Allow for many comments (e.g., 30 comments + overhead steps)
-    maxOutputTokens: options?.maxOutputTokens || 5000, // Small output
-    maxTotalTokens: options?.maxTotalTokens || 300000, // Increased to handle up to 30 comments with full conversation history
+    maxSteps: options?.maxSteps ?? PR_COMMENT_POSTER_DEFAULTS.maxSteps,
+    maxOutputTokens:
+      options?.maxOutputTokens ?? PR_COMMENT_POSTER_DEFAULTS.maxOutputTokens,
+    maxTotalTokens:
+      options?.maxTotalTokens ?? PR_COMMENT_POSTER_DEFAULTS.maxTotalTokens,
   });
 
   logger.info(
@@ -169,17 +170,10 @@ export async function postPRComments(
         messages,
         config: {
           limits,
-          onTokenWarning: (params) => {
-            logger.warn(params, "Approaching total token limit");
-          },
-          tokenWarningMessage: (percentage) => ({
-            role: "user",
-            content: `⚠️ WARNING: You are approaching the token limit (${percentage}%). If the review has been created but not yet submitted, you MUST submit it in the next step using pull_request_review_write with method="submit_pending", event="COMMENT". Do NOT wait for more comments - submit now if not already submitted.`,
-          }),
           onTokenForce: (params) => {
             logger.warn(
               params,
-              "Approaching token limit, forcing output generation"
+              "Past 85% token budget — wrap-up nudge (tools still allowed)"
             );
           },
           onStepForce: (params) => {
@@ -191,8 +185,8 @@ export async function postPRComments(
           onTokenLimitExceeded: (params) => {
             logger.error(params, "Total token limit exceeded, aborting");
           },
-          tokenForceMessage: () =>
-            'CRITICAL: You are approaching the token limit. If the review has been created but not yet submitted, you MUST submit it now using pull_request_review_write with method="submit_pending", event="COMMENT". After submitting (or if already submitted), immediately return your final output as JSON matching the schema. Do not call any more tools.',
+          tokenForceMessage: (percentage) =>
+            `You are at about ${percentage}% of the token budget. Finish any remaining inline comments, then submit the pending review with pull_request_review_write (method="submit_pending", event="COMMENT") if not already submitted — do not defer submit. After that, return your final JSON. You may still use tools until the hard budget cap.`,
           stepForceMessage: () =>
             'CRITICAL: You are approaching the step limit. If the review has been created but not yet submitted, you MUST submit it now using pull_request_review_write with method="submit_pending", event="COMMENT". After submitting (or if already submitted), immediately return your final output as JSON matching the schema. Do not call any more tools.',
         },
