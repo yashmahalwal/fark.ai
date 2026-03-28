@@ -24,7 +24,7 @@ inputs:
     description: "Pull request number to analyze (defaults to context PR number if available)"
     required: false
   backend_codebase_path:
-    description: "Local filesystem path to backend codebase (defaults to ${{ github.workspace }})"
+    description: "Path to the backend checkout on the runner (absolute, or relative to GITHUB_WORKSPACE)."
     required: false
 
   # Frontend configuration (JSON array format - YAML arrays in workflow are JSON-compatible)

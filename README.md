@@ -1,93 +1,74 @@
-# fark-ai
+# fark.ai
 
-GitHub Action that looks at a **backend pull request**, finds **breaking API changes**, checks **one or more frontend codebases** for where those changes would break clients, then leaves a **draft PR review** with **inline comments** on the backend PR.
-
----
-
-## Table of contents
-
-- [What is fark-ai?](#what-is-fark-ai)
-- [What you get](#what-you-get)
-- [How it works (step by step)](#how-it-works-step-by-step)
-- [What you need first](#what-you-need-first)
-- [Add the action to your backend repository](#add-the-action-to-your-backend-repository)
-- [Example: backend PR workflow with extra frontends checked out](#example-backend-pr-workflow-with-extra-frontends-checked-out)
-- [Example: same repo (monorepo) layout](#example-same-repo-monorepo-layout)
-- [Secrets](#secrets)
-- [Inputs (full list)](#inputs-full-list)
-- [Outputs](#outputs)
-- [The `frontends` setting (JSON)](#the-frontends-setting-json)
-- [Paths on the runner](#paths-on-the-runner)
-- [GitHub MCP URL](#github-mcp-url)
-- [Optional: tune token and step limits](#optional-tune-token-and-step-limits)
-- [Default limits (reference)](#default-limits-reference)
-- [Pointing `uses:` at this repository](#pointing-uses-at-this-repository)
-- [Building and shipping `dist/` (maintainers)](#building-and-shipping-dist-maintainers)
-- [Run locally (developers)](#run-locally-developers)
-- [Troubleshooting](#troubleshooting)
-- [Project layout](#project-layout)
-- [License](#license)
+GitHub Action: analyze a **backend PR** for breaking API-style changes, scan **checked-out frontend repos** on disk, then open a **PR review** with inline comments. Runs on **Node 20**; entrypoint is `dist/index.js`.
 
 ---
 
-## What is fark-ai?
+## How to use (backend repository)
 
-It is a **composite-style JavaScript action** (runs on **Node 20**). You run it from a workflow, usually when someone opens or updates a **pull request** on your **backend** repo. It talks to **OpenAI** and to **GitHub** through the **GitHub MCP** endpoint you configure (default is GitHub’s Copilot MCP URL).
+Put a workflow under **`.github/workflows/`** in the repo whose **pull requests** you want analyzed (the backend).
 
-You must give it:
+1. **Clone everything the action needs** before the `uses:` step:
+   - **Backend** — this PR’s code (e.g. `actions/checkout@v4` with `path: backend`).
+   - **Each frontend** — separate `actions/checkout` steps, each with its own `path:` (sibling folders under `GITHUB_WORKSPACE`, not nested inside the backend folder).
 
-- Paths on disk to the **backend** repo (the PR branch checkout).
-- Paths on disk to each **frontend** repo (or folder), already checked out at the branch you care about.
-- A **GitHub token** that can use MCP for that backend PR, and an **OpenAI API key**.
+2. **Pass `backend_codebase_path`** and each frontend **`codebasePath`** (in the JSON) so they match those folders. Relative paths are resolved against `GITHUB_WORKSPACE`.
 
----
+3. **Secrets / tokens** — see below. You need an **OpenAI** key and GitHub access for checkouts + MCP.
 
-## What you get
+4. **Call the action**, e.g. `uses: <owner>/fark.ai@<ref>` with the required `with:` inputs (minimal example in the next section).
 
-- A **summary** of breaking API-style changes inferred from the backend PR.
-- **Frontend impact** lines tied to those changes (per frontend repo you listed).
-- A **submitted or pending review** on the backend PR with **one inline thread per diff hunk** the tool was given (see your comment-generator behavior in code for exact rules).
-- **Job outputs** you can use in later steps: counts of changes, impacts, and comments.
+The action does **not** clone frontends for you; it only reads whatever is already on disk at `codebasePath`.
 
 ---
 
-## How it works (step by step)
+## Tokens and permissions
 
-1. **Backend analyzer** – Reads the PR (via MCP) and the backend tree on disk. Outputs structured “breaking change” items grouped in batches.
-2. **Frontend finder** – For each frontend you configured, and for each batch, searches that frontend codebase for real breakages. Runs with a **concurrency limit** so you do not start too many jobs at once.
-3. **Comment generator** – Builds markdown for a review **summary** and **per-line comments** from the merged results.
-4. **PR comment poster** – Creates a **pending review**, adds **inline comments**, then **submits** the review via MCP.
+| What | Where | Needs |
+|------|--------|--------|
+| **Frontend repos** | `actions/checkout` only (`token:` on those steps) | Read access to clone those repos (PAT or fine-grained token). **Not** an input to fark.ai. |
+| **Backend PR** | Action input `backend_github_token` | Whatever **GitHub MCP** requires for this repo’s PR: read files/diff/metadata and create review / review comments. |
+| **OpenAI** | Action input `openai_api_key` | Valid API key (store as a **repository secret**, e.g. `OPENAI_API_KEY`). |
 
-If any step fails, check logs: each stage logs under its own name (for example `Orchestrate`, `PR Comment Poster`).
+### Backend: reuse `GITHUB_TOKEN` (no extra backend secret)
+
+If GitHub MCP accepts the job token, authorize the workflow on the **backend** repo and pass it in:
+
+```yaml
+permissions:
+  contents: read          # read repo tree / files for the PR
+  pull-requests: write    # create/update reviews and PR review comments
+
+jobs:
+  fark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: backend
+
+      # … checkout each frontend with token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }} if needed …
+
+      - uses: my-org/fark.ai@main
+        with:
+          backend_github_token: ${{ github.token }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          backend_owner: ${{ github.repository_owner }}
+          backend_repo: ${{ github.event.repository.name }}
+          backend_codebase_path: ${{ github.workspace }}/backend
+          frontends: |
+            [ { "repository": { "owner": "my-org", "repo": "my-web", "branch": "main" }, "codebasePath": "my-web" } ]
+```
+
+Use a **PAT secret** for `backend_github_token` instead if MCP rejects `GITHUB_TOKEN` or you hit permission limits (e.g. some **fork** PR workflows give the token only read access to the PR).
+
+### Frontend: checkout token
+
+Use a secret on **`actions/checkout`** for private or cross-org frontends, e.g. `token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }}` with a token that can **read** those repositories. Public repos may work without a custom token depending on your org settings.
 
 ---
 
-## What you need first
-
-| Need | Why |
-|------|-----|
-| **Backend checkout** on the runner | The action reads source files from disk (not only the diff text). |
-| **Frontend checkouts** on the runner | Same: search happens in those folders. |
-| **`backend_github_token` secret** | Used for GitHub MCP (PR read, review write, etc.). Must be allowed to do those operations on the **backend** repo. |
-| **`openai_api_key` secret** | All LLM steps use OpenAI. |
-| **`dist/` present on the git ref you `uses:`** | `action.yml` runs `dist/index.js`. This repo’s **Release / Build** workflow builds and commits `dist/` on pushes to the default branch (see [Building and shipping `dist/`](#building-and-shipping-dist-maintainers)). |
-
----
-
-## Add the action to your backend repository
-
-1. Put a workflow file under `.github/workflows/` (for example `fark-ai.yml`).
-2. Trigger on `pull_request` (or `pull_request_target` if you know the risks and need it).
-3. **Check out the backend** (usually the default checkout for that repo).
-4. **Check out each frontend** into a folder under `github.workspace` (or use absolute paths if you really want).
-5. Call **`uses: <owner>/<repo>@<ref>`** with the inputs below.
-6. Add **secrets** in the backend repo settings.
-
----
-
-## Example: backend PR workflow with extra frontends checked out
-
-This pattern fits when the backend is **this** repo’s PR, and frontends live in **other** repos. You need a token that can **read** those repos (often the same PAT you pass as `backend_github_token` if it has org/repo access).
+## Full workflow example (backend + two frontends)
 
 ```yaml
 name: Breaking API check
@@ -96,218 +77,101 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  pull-requests: write
+  contents: read
+
 jobs:
-  fark-ai:
+  fark:
     runs-on: ubuntu-latest
     steps:
-      # Backend PR branch (default workspace)
-      - name: Checkout backend
+      - name: Checkout backend (this PR)
         uses: actions/checkout@v4
+        with:
+          path: backend
 
       - name: Checkout frontend web
         uses: actions/checkout@v4
         with:
           repository: my-org/my-web-app
           ref: main
-          path: frontends/web
-          token: ${{ secrets.FARK_GITHUB_TOKEN }}
+          path: my-web-app
+          token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }}
 
-      - name: Checkout mobile app
+      - name: Checkout frontend mobile
         uses: actions/checkout@v4
         with:
           repository: my-org/my-mobile-app
           ref: main
-          path: frontends/mobile
-          token: ${{ secrets.FARK_GITHUB_TOKEN }}
+          path: my-mobile-app
+          token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }}
 
-      - name: Run fark-ai
-        uses: my-org/fark-ai@main
+      - name: Run fark.ai
+        uses: my-org/fark.ai@main
         with:
-          backend_github_token: ${{ secrets.FARK_GITHUB_TOKEN }}
+          backend_github_token: ${{ github.token }}
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           backend_owner: ${{ github.repository_owner }}
           backend_repo: ${{ github.event.repository.name }}
-          # PR number: omit on pull_request events and the action uses the event PR
-          backend_codebase_path: ${{ github.workspace }}
+          backend_codebase_path: ${{ github.workspace }}/backend
           frontends: |
             [
               {
                 "repository": { "owner": "my-org", "repo": "my-web-app", "branch": "main" },
-                "codebasePath": "frontends/web"
+                "codebasePath": "my-web-app"
               },
               {
                 "repository": { "owner": "my-org", "repo": "my-mobile-app", "branch": "main" },
-                "codebasePath": "frontends/mobile"
-              }
-            ]
-          log_level: info
-```
-
-Notes:
-
-- Replace `my-org`, repo names, branch names, and `uses: my-org/fark-ai@main` with yours.
-- Pin `@v1` or a **commit SHA** instead of `@main` when you want stable behavior.
-- `codebasePath` values are **relative to `GITHUB_WORKSPACE`** unless they start with `/`.
-
----
-
-## Example: same repo (monorepo) layout
-
-If backend and frontends are **folders inside one checkout**:
-
-```yaml
-on:
-  pull_request:
-
-jobs:
-  fark-ai:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: my-org/fark-ai@main
-        with:
-          backend_github_token: ${{ secrets.FARK_GITHUB_TOKEN }}
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          backend_owner: ${{ github.repository_owner }}
-          backend_repo: ${{ github.event.repository.name }}
-          backend_codebase_path: ${{ github.workspace }}/services/api
-          frontends: |
-            [
-              {
-                "repository": { "owner": "my-org", "repo": "my-monorepo", "branch": "main" },
-                "codebasePath": "apps/web"
+                "codebasePath": "my-mobile-app"
               }
             ]
 ```
 
-Here `apps/web` is relative to the workspace root (the repo root after checkout).
+Pin `@v1` or a commit SHA instead of `@main` for reproducible runs. This repo must have **`dist/`** committed on the ref you use (`action.yml` runs `dist/index.js`).
 
 ---
 
-## Secrets
+## Monorepo (single checkout)
 
-| Secret (example name) | Maps to input | Notes |
-|------------------------|---------------|--------|
-| `OPENAI_API_KEY` | `openai_api_key` | Create in OpenAI dashboard. |
-| `FARK_GITHUB_TOKEN` (or any name you choose) | `backend_github_token` | **Personal access token** or **fine-grained PAT** with rights to use GitHub MCP against the **backend** repo and to read/write what MCP needs (PR, reviews). If you checkout other repos, that token must be able to read them too. |
-
-**Do not** commit secrets. Use **GitHub Actions secrets** only.
+If backend and frontend live under one tree, one `actions/checkout` is enough; set `backend_codebase_path` and each `codebasePath` to folders under `${{ github.workspace }}` (relative or absolute).
 
 ---
 
-## Inputs (full list)
+## Action inputs (reference)
 
-| Input | Required | Default | What it does |
-|-------|----------|---------|----------------|
-| `backend_github_token` | Yes | — | Token for GitHub MCP (backend PR operations). |
-| `openai_api_key` | Yes | — | OpenAI key for all agents. |
-| `github_mcp_server_url` | No | `https://api.githubcopilot.com/mcp/` | MCP base URL. |
-| `backend_owner` | Yes | — | GitHub owner/org of the **backend** repo. |
-| `backend_repo` | Yes | — | Backend repo name (without owner). |
-| `backend_pr_number` | No | PR from `github.context` when available | Which PR to analyze. Required if the workflow is not a `pull_request` event with a PR in context. |
-| `backend_codebase_path` | No | `github.workspace` | Folder where the backend code lives on the runner. |
-| `frontends` | Yes | — | JSON array (string). See [The `frontends` setting (JSON)](#the-frontends-setting-json). |
-| `log_level` | No | `info` | `fatal` \| `error` \| `warn` \| `info` \| `debug` \| `trace` |
-| `be_analyzer_max_steps` | No | (see [defaults](#default-limits-reference)) | Cap model steps for backend analyzer. |
-| `be_analyzer_max_output_tokens` | No | | Cap output tokens per step (analyzer). |
-| `be_analyzer_max_total_tokens` | No | | Cap **input+output** tokens for that agent run. |
-| `frontend_finder_max_steps` | No | | Applied to **every** frontend (merged with per-frontend `options` in JSON if you add them). |
-| `frontend_finder_max_output_tokens` | No | | Same. |
-| `frontend_finder_max_total_tokens` | No | | Same. |
-| `frontend_finder_concurrency_limit` | No | `5` | Max parallel frontend×batch tasks. |
-| `comment_generator_max_steps` | No | | Comment generator limits. |
-| `comment_generator_max_output_tokens` | No | | |
-| `comment_generator_max_total_tokens` | No | | |
-| `pr_comment_poster_max_steps` | No | | Poster limits (many inline comments need higher totals). |
-| `pr_comment_poster_max_output_tokens` | No | | |
-| `pr_comment_poster_max_total_tokens` | No | | |
-
----
+| Input | Required | Notes |
+|-------|----------|--------|
+| `backend_github_token` | Yes | MCP + backend PR (often `${{ github.token }}` with `permissions` above). |
+| `openai_api_key` | Yes | OpenAI key. |
+| `github_mcp_server_url` | No | Default `https://api.githubcopilot.com/mcp/`. |
+| `backend_owner` | Yes | Backend repo owner. |
+| `backend_repo` | Yes | Backend repo name. |
+| `backend_pr_number` | No | From `pull_request` context if omitted. |
+| `backend_codebase_path` | No | Backend root on runner; empty uses `GITHUB_WORKSPACE` in code. |
+| `frontends` | Yes | JSON array string. |
+| `log_level` | No | Default `info`. |
+| `be_analyzer_*`, `frontend_finder_*`, `comment_generator_*`, `pr_comment_poster_*` | No | Step/output/total token caps (strings in YAML). |
+| `frontend_finder_concurrency_limit` | No | Default `5`. |
 
 ## Outputs
 
-| Output | Type | Meaning |
-|--------|------|---------|
-| `changes_count` | string (number) | Backend breaking-change items after the pipeline merged them for commenting. |
-| `impacts_count` | string (number) | Total frontend impact rows attached across those changes. |
-| `comments_count` | string (number) | Length of the generated comments list passed to the poster (one entry per planned inline comment). |
-
-Use them in later steps with `${{ steps.<step-id>.outputs.changes_count }}` (name your step `id:`).
+`changes_count`, `impacts_count`, `comments_count` (strings). Use with `${{ steps.<id>.outputs.* }}`.
 
 ---
 
-## The `frontends` setting (JSON)
+## `frontends` JSON
 
-`frontends` must be a **JSON array**. Each element is one frontend codebase to search.
+Array of objects:
 
-**Required fields per element**
+- **`repository`**: `{ "owner", "repo", "branch" }` — labels / expectations (branch should match what you checked out).
+- **`codebasePath`**: directory on the runner (relative to `GITHUB_WORKSPACE` unless absolute).
+- **`options`** (optional): per-frontend `maxSteps`, `maxOutputTokens`, `maxTotalTokens`.
 
-- `repository.owner`, `repository.repo`, `repository.branch` – Identify the repo (for labels in comments; branch is the branch you expect checked out at `codebasePath`).
-- `codebasePath` – Directory on the runner that already contains that checkout.
-
-**Optional fields per element**
-
-- `options` – Same shape as the action’s limit inputs, for **this** frontend only: `maxSteps`, `maxOutputTokens`, `maxTotalTokens`. If you set both action inputs (`frontend_finder_max_*`) and `options`, **per-frontend fields override** the matching action-level field.
-
-**Minimal shape**
-
-```json
-[
-  {
-    "repository": { "owner": "my-org", "repo": "my-app", "branch": "main" },
-    "codebasePath": "frontends/web"
-  }
-]
-```
-
-In YAML, pass it as a **block scalar** after `frontends: |` so the JSON can span lines (see examples above).
+Pass as a YAML block scalar: `frontends: |` then the JSON.
 
 ---
 
-## Paths on the runner
-
-- **`backend_codebase_path`** and each **`codebasePath`** must exist **before** the action runs.
-- If a path does **not** start with `/`, the action joins it with **`GITHUB_WORKSPACE`**.
-- Typical layout: one `actions/checkout` for backend at `.`, more checkouts with `path: frontends/foo`, then `codebasePath: frontends/foo`.
-
----
-
-## GitHub MCP URL
-
-- Input: `github_mcp_server_url`.
-- If you leave it empty, the action uses **`https://api.githubcopilot.com/mcp/`** (same as `action.yml` default).
-- Your token must be valid for whatever MCP server you point at.
-
----
-
-## Optional: tune token and step limits
-
-Raise limits when logs show:
-
-- “token limit” or “step limit” warnings,
-- truncated reviews,
-- or “could not submit” near budget caps.
-
-You can set only the knobs you need; others stay at [defaults](#default-limits-reference).
-
-**Example**
-
-```yaml
-with:
-  # ...required inputs...
-  pr_comment_poster_max_total_tokens: '200000'
-  frontend_finder_max_total_tokens: '300000'
-  frontend_finder_concurrency_limit: '3'
-```
-
-Use **strings** for numeric inputs in YAML (GitHub passes them as strings; the action parses them).
-
----
-
-## Default limits (reference)
-
-These match `src/constants/agent-token-defaults.ts` when you do **not** pass overrides.
+## Default agent limits
 
 | Agent | max steps | max output tokens | max total tokens |
 |-------|-----------|-------------------|------------------|
@@ -316,79 +180,23 @@ These match `src/constants/agent-token-defaults.ts` when you do **not** pass ove
 | Comment generator | 12 | 8_192 | 48_000 |
 | PR comment poster | 45 | 8_192 | 150_000 |
 
-**Concurrency** (frontend jobs): **5** if you do not set `frontend_finder_concurrency_limit` or env `FRONTEND_FINDER_CONCURRENCY_LIMIT` in orchestration.
-
----
-
-## Pointing `uses:` at this repository
-
-Examples:
-
-```yaml
-uses: my-org/fark-ai@main          # latest on default branch (ensure dist/ is committed)
-uses: my-org/fark-ai@v1           # tag (recommended for production)
-uses: my-org/fark-ai@abc1234      # full commit SHA (most reproducible)
-```
-
-This repo keeps **`src/`** in git; **`action.yml`** entrypoint is **`dist/index.js`**. Consumers need a ref where **`dist/` exists**.
-
----
-
-## Building and shipping `dist/` (maintainers)
-
-1. **Workflow `Release / Build`** (`.github/workflows/release-build.yml`):
-   - On **pull requests** to `main`: runs `npm ci` and `npm run build` and checks `dist/index.js` exists (no push).
-   - On **push** to the **default branch** (and on **workflow_dispatch** on that branch): same build, then **commits and pushes** `dist/` if it changed (`git add -f dist` because `dist/` is gitignored for local dev).
-
-2. **Repository setting**: **Settings → Actions → General → Workflow permissions** → allow **Read and write** so `GITHUB_TOKEN` can push the `dist/` commit.
-
-3. **Branch protection**: If bots cannot push to `main`, either allow **github-actions[bot]** or merge `dist/` updates via PR.
-
-4. **Local**: `npm ci && npm run build` produces `dist/`; you can commit with `git add -f dist` if needed.
-
----
-
-## Run locally (developers)
-
-1. Copy **`.env.example`** to **`.env`** and fill values (see comments inside).
-2. Install: `npm ci`
-3. Run the orchestration script: `npm run test:orchestrate`
-
-That script reads env vars (backend repo, PR number, `FRONTENDS` JSON, tokens, optional limit vars). It calls the same `runFarkAnalysis` as the GitHub Action.
-
-Other scripts:
-
-- `npm run build` – compile TypeScript to `dist/`.
-- `npm run typecheck` – typecheck only.
-- `npm test` – unit tests (CI runs this too).
-
 ---
 
 ## Troubleshooting
 
-| Problem | What to check |
-|---------|----------------|
-| `Cannot find module` / missing `dist/index.js` | The ref you `uses:` must include a built **`dist/`**. Run **Release / Build** or build locally and commit `dist/`. |
-| MCP or GitHub errors | `backend_github_token` scopes and `github_mcp_server_url`. |
-| OpenAI errors | `openai_api_key`, quota, and model availability. |
-| Empty or tiny comments | Comment generator and poster logs; raise [limits](#optional-tune-token-and-step-limits) if runs stop early on token caps. |
-| Frontends not found | `codebasePath` must exist on disk; fix checkout steps or paths. |
-| Wrong PR analyzed | Set `backend_pr_number` explicitly for non-`pull_request` workflows. |
+| Issue | Check |
+|-------|--------|
+| `dist/index.js` missing | Use a ref where `dist/` is built and committed. |
+| MCP / GitHub errors | Token type and scopes; try PAT for `backend_github_token`. |
+| Frontend checkout fails | `token:` on checkout; read access to those repos. |
+| Paths wrong | `codebasePath` / `backend_codebase_path` match checkout `path:` / folders. |
 
 ---
 
-## Project layout
+## Maintainers
 
-| Path | Role |
-|------|------|
-| `action.yml` | Action metadata and inputs/outputs. |
-| `dist/index.js` | Compiled entry (produced by `npm run build`). |
-| `src/index.ts` | Action runner for GitHub (reads `core.getInput`, calls orchestrate). |
-| `src/workflow/orchestrate.ts` | Full pipeline. |
-| `src/agents/` | BE analyzer, frontend finder, comment generator, PR poster. |
-| `src/utils/get-*-prompt.ts` | Prompt text per agent. |
-| `src/constants/agent-token-defaults.ts` | Default step/token caps. |
-| `src/constants/github-mcp-defaults.ts` | Default MCP URL constant. |
+- **Build:** `npm ci && npm run build` → `dist/`. Release workflow can commit `dist/` to the default branch (see `.github/workflows/release-build.yml`).
+- **Local run:** `.env` from `.env.example`, then `npm run test:orchestrate` (uses `BACKEND_GITHUB_TOKEN`, paths in `FRONTENDS`, not checkout).
 
 ---
 
