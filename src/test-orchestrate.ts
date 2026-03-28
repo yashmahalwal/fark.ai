@@ -8,6 +8,7 @@
  * production workflow logic.
  */
 import "dotenv/config";
+import { DEFAULT_GITHUB_MCP_SERVER_URL } from "./constants/github-mcp-defaults";
 import { runFarkAnalysis } from "./workflow/orchestrate";
 import { frontendRepoSchema } from "./schemas/frontend-finder-schema";
 import { z } from "zod/v3";
@@ -29,7 +30,13 @@ const frontendConfigFromEnvSchema = z.object({
 
 const envSchema = z.object({
   BACKEND_GITHUB_TOKEN: z.string().min(1),
-  GITHUB_MCP_SERVER_URL: z.string().url(),
+  GITHUB_MCP_SERVER_URL: z.preprocess(
+    (val) =>
+      typeof val === "string" && val.trim() !== ""
+        ? val.trim()
+        : DEFAULT_GITHUB_MCP_SERVER_URL,
+    z.string().url()
+  ),
   BACKEND_OWNER: z.string().min(1),
   BACKEND_REPO: z.string().min(1),
   BACKEND_CODEBASE_PATH: z.string().min(1),

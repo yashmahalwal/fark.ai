@@ -81,6 +81,9 @@ inputs:
   frontend_finder_max_total_tokens:
     description: "Maximum total tokens for Frontend Finder (default: 150000)"
     required: false
+  frontend_finder_concurrency_limit:
+    description: "Maximum concurrent frontend finder tasks (default: 5)"
+    required: false
 
   # Comment Generator limits
   comment_generator_max_steps:

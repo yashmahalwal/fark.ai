@@ -1,0 +1,56 @@
+# Builds TypeScript to dist/ and commits it on the default branch so consumers
+# (uses: owner/repo@branch) get dist/index.js. action.yml runs dist/index.js.
+name: Release / Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# If your default branch is not "main", add it under push/pull_request branches above.
+
+concurrency:
+  group: release-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify action entrypoint
+        run: test -f dist/index.js
+
+      - name: Commit and push dist (default branch only)
+        if: >
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f dist
+          if git diff --staged --quiet; then
+            echo "dist/ already matches build output"
+            exit 0
+          fi
+          git commit -m "chore(dist): sync build for ${GITHUB_SHA:0:7}"
+          git push

@@ -1,8 +1,23 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import { DEFAULT_GITHUB_MCP_SERVER_URL } from "./constants/github-mcp-defaults";
 import { runFarkAnalysis } from "./workflow/orchestrate";
 import type { OrchestrateInput } from "./schemas/orchestrate-schema";
 import { frontendConfigSchema } from "./schemas/orchestrate-schema";
+import type { AgentOptions } from "./schemas/common-schema";
+
+function mergeAgentOptions(
+  base: AgentOptions | undefined,
+  override: AgentOptions | undefined
+): AgentOptions | undefined {
+  if (!base) return override;
+  if (!override) return base;
+  return {
+    maxSteps: override.maxSteps ?? base.maxSteps,
+    maxOutputTokens: override.maxOutputTokens ?? base.maxOutputTokens,
+    maxTotalTokens: override.maxTotalTokens ?? base.maxTotalTokens,
+  };
+}
 
 async function run(): Promise<void> {
   try {
@@ -12,8 +27,8 @@ async function run(): Promise<void> {
     });
     const openaiApiKey = core.getInput("openai_api_key", { required: true });
     const githubMcpServerUrl =
-      core.getInput("github_mcp_server_url") ||
-      "https://api.githubcopilot.com/mcp/";
+      core.getInput("github_mcp_server_url").trim() ||
+      DEFAULT_GITHUB_MCP_SERVER_URL;
 
     // Get backend configuration
     const backendOwner = core.getInput("backend_owner", { required: true });
@@ -104,6 +119,7 @@ async function run(): Promise<void> {
     };
 
     const backendOptions = buildAgentOptions("be_analyzer");
+    const frontendFinderOptions = buildAgentOptions("frontend_finder");
     const commentGeneratorOptions = buildAgentOptions("comment_generator");
     const prCommentPosterOptions = buildAgentOptions("pr_comment_poster");
 
@@ -136,7 +152,7 @@ async function run(): Promise<void> {
       frontends: validatedFrontends.map((frontend) => ({
         repository: frontend.repository,
         codebasePath: frontend.codebasePath,
-        options: frontend.options,
+        options: mergeAgentOptions(frontendFinderOptions, frontend.options),
       })),
       openaiApiKey,
       logLevel: logLevel as OrchestrateInput["logLevel"],
