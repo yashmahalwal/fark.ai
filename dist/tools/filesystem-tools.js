@@ -4,7 +4,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getReadonlyFilesystemTools = getReadonlyFilesystemTools;
-const just_bash_1 = require("just-bash");
 const ai_1 = require("ai");
 const node_path_1 = __importDefault(require("node:path"));
 const v3_1 = require("zod/v3");
@@ -23,13 +22,14 @@ async function getReadonlyFilesystemTools(codebasePath) {
      * Create a just-bash sandbox mounting the existing codebase as read-only
      * via an overlay filesystem. No file contents are loaded into memory.
      */
+    const { Bash, OverlayFs } = await (new Function("m", "return import(m)"))("just-bash");
     const absoluteRoot = node_path_1.default.resolve(codebasePath);
     // Create an overlay FS that points to the real checkout as the lower layer.
     // just-bash will use this overlay for all filesystem operations.
-    const fs = new just_bash_1.OverlayFs({
+    const fs = new OverlayFs({
         root: absoluteRoot, // read-only lower layer
     });
-    const bash = new just_bash_1.Bash({ fs, cwd: fs.getMountPoint() });
+    const bash = new Bash({ fs, cwd: fs.getMountPoint() });
     const readFileTool = (0, ai_1.tool)({
         description: "Read the contents of a file from the codebase.",
         inputSchema: v3_1.z.object({

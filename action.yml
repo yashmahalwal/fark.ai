@@ -110,14 +110,34 @@ inputs:
 outputs:
   changes_count:
     description: "Number of backend changes detected"
+    value: ${{ steps.run.outputs.changes_count }}
   impacts_count:
     description: "Total number of frontend impacts found"
+    value: ${{ steps.run.outputs.impacts_count }}
   comments_count:
     description: "Number of PR comments posted"
+    value: ${{ steps.run.outputs.comments_count }}
 
 runs:
-  using: "node20"
-  main: "dist/index.js"
+  using: composite
+  steps:
+    - name: Cache node_modules
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.action_path }}/node_modules
+        key: ${{ runner.os }}-fark-ai-${{ hashFiles(format('{0}/package-lock.json', github.action_path)) }}
+
+    - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --prefix ${{ github.action_path }}
+
+    - name: Run
+      id: run
+      shell: bash
+      run: node ${{ github.action_path }}/dist/index.js
+
 branding:
   icon: "zap"
   color: "blue"

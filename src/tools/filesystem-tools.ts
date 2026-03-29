@@ -1,4 +1,3 @@
-import { Bash, OverlayFs } from "just-bash";
 import { tool } from "ai";
 import path from "node:path";
 import { z } from "zod/v3";
@@ -19,6 +18,7 @@ export async function getReadonlyFilesystemTools(codebasePath: string) {
    * Create a just-bash sandbox mounting the existing codebase as read-only
    * via an overlay filesystem. No file contents are loaded into memory.
    */
+  const { Bash, OverlayFs } = await (new Function("m", "return import(m)"))("just-bash") as typeof import("just-bash");
   const absoluteRoot = path.resolve(codebasePath);
 
   // Create an overlay FS that points to the real checkout as the lower layer.

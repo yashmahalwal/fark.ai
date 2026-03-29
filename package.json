@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Fark AI GitHub Action",
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
     "build": "tsc",
     "package": "npm run build && npm pack",
