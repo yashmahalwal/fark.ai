@@ -136,6 +136,29 @@ runs:
     - name: Run
       id: run
       shell: bash
+      env:
+        INPUT_BACKEND_GITHUB_TOKEN: ${{ inputs.backend_github_token }}
+        INPUT_OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        INPUT_GITHUB_MCP_SERVER_URL: ${{ inputs.github_mcp_server_url }}
+        INPUT_BACKEND_OWNER: ${{ inputs.backend_owner }}
+        INPUT_BACKEND_REPO: ${{ inputs.backend_repo }}
+        INPUT_BACKEND_PR_NUMBER: ${{ inputs.backend_pr_number }}
+        INPUT_BACKEND_CODEBASE_PATH: ${{ inputs.backend_codebase_path }}
+        INPUT_FRONTENDS: ${{ inputs.frontends }}
+        INPUT_LOG_LEVEL: ${{ inputs.log_level }}
+        INPUT_BE_ANALYZER_MAX_STEPS: ${{ inputs.be_analyzer_max_steps }}
+        INPUT_BE_ANALYZER_MAX_OUTPUT_TOKENS: ${{ inputs.be_analyzer_max_output_tokens }}
+        INPUT_BE_ANALYZER_MAX_TOTAL_TOKENS: ${{ inputs.be_analyzer_max_total_tokens }}
+        INPUT_FRONTEND_FINDER_MAX_STEPS: ${{ inputs.frontend_finder_max_steps }}
+        INPUT_FRONTEND_FINDER_MAX_OUTPUT_TOKENS: ${{ inputs.frontend_finder_max_output_tokens }}
+        INPUT_FRONTEND_FINDER_MAX_TOTAL_TOKENS: ${{ inputs.frontend_finder_max_total_tokens }}
+        INPUT_FRONTEND_FINDER_CONCURRENCY_LIMIT: ${{ inputs.frontend_finder_concurrency_limit }}
+        INPUT_COMMENT_GENERATOR_MAX_STEPS: ${{ inputs.comment_generator_max_steps }}
+        INPUT_COMMENT_GENERATOR_MAX_OUTPUT_TOKENS: ${{ inputs.comment_generator_max_output_tokens }}
+        INPUT_COMMENT_GENERATOR_MAX_TOTAL_TOKENS: ${{ inputs.comment_generator_max_total_tokens }}
+        INPUT_PR_COMMENT_POSTER_MAX_STEPS: ${{ inputs.pr_comment_poster_max_steps }}
+        INPUT_PR_COMMENT_POSTER_MAX_OUTPUT_TOKENS: ${{ inputs.pr_comment_poster_max_output_tokens }}
+        INPUT_PR_COMMENT_POSTER_MAX_TOTAL_TOKENS: ${{ inputs.pr_comment_poster_max_total_tokens }}
       run: node ${{ github.action_path }}/dist/index.js
 
 branding:
