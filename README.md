@@ -26,40 +26,54 @@ jobs:
       - name: Checkout backend (this PR)
         uses: actions/checkout@v4
         with:
+          # The action only reads what is already checked out on disk
           path: backend
 
       - name: Checkout fark-frontend-demo
         uses: actions/checkout@v4
         with:
+          # Frontend repo to scan for breakages
           repository: your-org/your-frontend
           ref: main
+          # Must be the `codebasePath` used later in `frontends: |`
           path: your-frontend
+          # PAT for private/cross-org frontends; omit if not needed
           token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }}
 
       - name: Checkout fark-mobile-demo
         uses: actions/checkout@v4
         with:
+          # Mobile repo to scan for breakages
           repository: your-org/your-mobile
           ref: main
+          # Must be the `codebasePath` used later in `frontends: |`
           path: your-mobile
+          # PAT for private/cross-org frontends; omit if not needed
           token: ${{ secrets.FARK_FRONTEND_GITHUB_TOKEN }}
 
       - name: Run fark.ai
         uses: yashmahalwal/fark.ai@main
         with:
+          # Token used by MCP to read the backend PR and post review comments
           backend_github_token: ${{ github.token }}
+          # OpenAI key used by all agents
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          # Backend identity (used by MCP)
           backend_owner: ${{ github.repository_owner }}
           backend_repo: ${{ github.event.repository.name }}
+          # Where the backend is available on disk (must match checkout `path: backend`)
           backend_codebase_path: ${{ github.workspace }}/backend
+          # YAML block scalar containing a JSON array of frontend configs
           frontends: |
             [
               {
                 "repository": { "owner": "your-org", "repo": "your-frontend", "branch": "main" },
+                # Must match the checkout `path:` for this frontend
                 "codebasePath": "${{ github.workspace }}/your-frontend"
               },
               {
                 "repository": { "owner": "your-org", "repo": "your-mobile", "branch": "main" },
+                # Must match the checkout `path:` for this frontend
                 "codebasePath": "${{ github.workspace }}/your-mobile"
               }
             ]
@@ -69,11 +83,12 @@ jobs:
 
 ## Docs
 
-- Architecture & Agents: `docs/fark-ai/01-architecture.md`
-- Speed & Token Strategy: `docs/fark-ai/02-speed-and-tokens.md`
-- Running Locally: `docs/fark-ai/03-running-locally.md`
-- Maintenance & Publishing: `docs/fark-ai/04-maintenance-and-publishing.md`
-- Examples: `docs/fark-ai/05-examples.md`
+- See: [`docs/fark-ai/README.md`](docs/fark-ai/README.md)
+- [Architecture & Agents](docs/fark-ai/01-architecture.md)
+- [Speed & Token Strategy](docs/fark-ai/02-speed-and-tokens.md)
+- [Running Locally](docs/fark-ai/03-running-locally.md)
+- [Maintenance & Publishing](docs/fark-ai/04-maintenance-and-publishing.md)
+- [Examples](docs/fark-ai/05-examples.md)
 
 ---
 
