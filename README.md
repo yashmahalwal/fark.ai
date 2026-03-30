@@ -67,6 +67,16 @@ jobs:
 
 ---
 
+## Docs
+
+- Architecture & Agents: `docs/fark-ai/01-architecture.md`
+- Speed & Token Strategy: `docs/fark-ai/02-speed-and-tokens.md`
+- Running Locally: `docs/fark-ai/03-running-locally.md`
+- Maintenance & Publishing: `docs/fark-ai/04-maintenance-and-publishing.md`
+- Examples: `docs/fark-ai/05-examples.md`
+
+---
+
 ## Workflow breakdown
 
 ### `on` / `permissions`
