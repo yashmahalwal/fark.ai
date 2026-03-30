@@ -8,7 +8,7 @@ The backend diff analyzer identifies breaking API interface changes from the PR 
 
 Why this example is useful:
 
-- It’s a clear “object structure changed” / “field shape changed” break, so the expected impacts are localized to request/response parsing and usage in UI components.
+- It’s a clear "object structure changed" / "field shape changed" break, so the expected impacts are localized to request/response parsing and usage in UI components.
 
 ## Example: Multiple breaking changes
 
