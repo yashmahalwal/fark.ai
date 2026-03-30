@@ -1,4 +1,5 @@
 import pino from "pino";
+import pretty from "pino-pretty";
 
 // Re-export pino.Level for convenience
 export type LogLevel = pino.Level;
@@ -13,16 +14,10 @@ export function createLogger(
   logLevel: pino.Level = "info",
   prefix: string
 ): pino.Logger {
-  return pino({
-    level: logLevel,
-    msgPrefix: `${prefix}: `,
-    transport: {
-      target: "pino-pretty",
-      options: {
-        colorize: true,
-        translateTime: "HH:MM:ss Z",
-        ignore: "pid,hostname",
-      },
-    },
+  const stream = pretty({
+    colorize: true,
+    translateTime: "HH:MM:ss Z",
+    ignore: "pid,hostname",
   });
+  return pino({ level: logLevel, msgPrefix: `${prefix}: ` }, stream);
 }

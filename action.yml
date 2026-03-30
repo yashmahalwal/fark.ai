@@ -121,18 +121,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Cache node_modules
-      id: cache
-      uses: actions/cache@v4
-      with:
-        path: ${{ github.action_path }}/node_modules
-        key: ${{ runner.os }}-fark-ai-${{ hashFiles(format('{0}/package-lock.json', github.action_path)) }}
-
-    - name: Install dependencies
-      if: steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: npm ci --prefix ${{ github.action_path }}
-
     - name: Run
       id: run
       shell: bash
