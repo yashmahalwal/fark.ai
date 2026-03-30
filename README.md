@@ -155,8 +155,8 @@ Use with `${{ steps.<step-id>.outputs.changes_count }}`.
 
 ## Maintenance
 
-**Build:** `npm run build` — bundles `src/index.ts` → `dist/index.js` via esbuild. Commit `dist/` when releasing (the release workflow does this automatically on push to `main`).
+**Build:** `npm run build` — bundles `src/index.ts` → `dist/index.js` via esbuild.
 
 **Local dev:** copy `.env.example` to `.env`, fill in secrets, then `npm run dev` to build and run. `npm run debug` to attach a debugger. `npm run typecheck` for type checking.
 
-**Release:** push to `main` — `.github/workflows/release-build.yml` builds and commits `dist/` automatically.
+**Release:** a pre-push git hook (husky) runs `npm run build` automatically before every push and commits `dist/` if it changed. `dist/` must be committed for the action to work — the hook handles this without manual steps.

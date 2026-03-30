@@ -1,0 +1,6 @@
+#!/bin/sh
+npm run build
+git add dist/
+if ! git diff --cached --quiet dist/; then
+  git commit -m "chore(dist): sync build" --no-verify
+fi
