@@ -115,14 +115,14 @@ export async function analyzeBackendDiff(
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
       toolsCount: Object.keys(allTools).length,
-      model: "gpt-5.2",
+      model: "gpt-5.4",
     },
     "Starting analysis with OpenAI"
   );
 
   // Active tools: GitHub tools for PR operations, filesystem tools for code reading
   const result = await generateText({
-    model: openaiClient("gpt-5.2"),
+    model: openaiClient("gpt-5.4"),
     output: outputSpec,
     tools: allTools,
     activeTools: ["pull_request_read", "readFile", "bash"] as Array<

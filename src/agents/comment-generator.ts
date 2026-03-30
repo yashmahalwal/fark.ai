@@ -77,13 +77,13 @@ export async function generatePRComments(
       maxSteps: limits.MAX_STEPS,
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
-      model: "gpt-4o",
+      model: "gpt-5.4-mini",
     },
     "Starting analysis with OpenAI"
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-4o"),
+    model: openaiClient("gpt-5.4-mini"),
     output: outputSpec,
     stopWhen: stepCountIs(limits.MAX_STEPS),
     maxOutputTokens: limits.MAX_OUTPUT_TOKENS,

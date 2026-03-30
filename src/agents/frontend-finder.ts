@@ -113,13 +113,13 @@ export async function findFrontendImpacts(
       maxSteps: limits.MAX_STEPS,
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
-      model: "gpt-5.2",
+      model: "gpt-5.4-mini",
     },
     "Starting analysis with OpenAI"
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-5.2"),
+    model: openaiClient("gpt-5.4-mini"),
     output: outputSpec,
     tools,
     activeTools: ["readFile", "bash"],

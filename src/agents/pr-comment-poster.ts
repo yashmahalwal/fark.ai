@@ -146,13 +146,13 @@ export async function postPRComments(
       maxSteps: limits.MAX_STEPS,
       maxOutputTokens: limits.MAX_OUTPUT_TOKENS,
       maxTotalTokens: limits.MAX_TOTAL_TOKENS,
-      model: "gpt-5.2",
+      model: "gpt-5.4-mini",
     },
     "Starting review creation with OpenAI"
   );
 
   const result = await generateText({
-    model: openaiClient("gpt-5.2"),
+    model: openaiClient("gpt-5.4-mini"),
     output: outputSpec,
     tools: wrappedTools,
     activeTools: [
