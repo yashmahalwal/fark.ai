@@ -1,6 +1,6 @@
 # fark.ai
 
-GitHub Action that analyzes a backend PR for breaking API changes, scans checked-out frontend repos, and posts inline PR review comments.
+An agentic GitHub Action that analyzes a backend PR for breaking API changes, and cross validates across frontend codebases to find real-world breaking changes.
 
 ---
 
